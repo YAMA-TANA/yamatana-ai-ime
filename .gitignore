@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Build outputs and caches
+build/
+dist/
+release/
+*.obj
+*.pdb
+*.wixpdb
+*.msi
+*.msix
+*.exe
+*.dll
+*.log
+.wix/
+bazel-*
+
+# Models and generated data (downloaded with a pinned manifest)
+models/
+*.onnx
+*.safetensors
+data/massive_homophone_database.json
+data/homonym_ksasao/homonym.txt
+data/homonym_ksasao/homonym2.txt
+
+# Local settings, secrets and tools
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+*.cer
+*.key
+*.snk
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+

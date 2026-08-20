@@ -1,0 +1,139 @@
+"""Local-only product settings for Yamatana AI IME (MOZC Ver)."""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Any, Mapping, Optional
+
+
+PRODUCT_NAME = "Yamatana AI IME (MOZC Ver)"
+PRODUCT_VERSION = "1.0.0"
+SETTINGS_SCHEMA = 1
+
+DOMAIN_PRESETS = {
+    "general": ("一般", "自然で一般的な日本語として、文脈に合う表記を優先する。"),
+    "medical": ("医学・医療", "医学・医療文書として、疾患名、解剖、薬剤、治療に適切な専門表記を優先する。"),
+    "legal": ("法律・行政", "法律・行政文書として、法令、契約、制度に適切な正式表記を優先する。"),
+    "business": ("ビジネス", "ビジネス文書として、簡潔で正式な表記と一般的な業務用語を優先する。"),
+    "software": ("IT・ソフトウェア", "IT・ソフトウェア文書として、技術用語、製品名、コード周辺の表記を優先する。"),
+    "academic": ("学術・研究", "学術文書として、専門用語の一貫性と論文調の正式表記を優先する。"),
+    "creative": ("創作・会話", "創作・会話文として、人物の語調と自然な口語表現を優先する。"),
+    "custom": ("カスタム", ""),
+}
+
+COMPUTE_MODES = {
+    "auto": "自動選択（GPU優先、利用できなければCPU）",
+    "gpu": "GPU（高速、対応GPUが必要）",
+    "cpu": "CPU（互換性優先）",
+}
+
+CONTEXT_LENGTHS = (0, 32, 64, 128, 256, 512)
+
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "schema": SETTINGS_SCHEMA,
+    # The tray starts with Windows, but the model process does not.  This is
+    # deliberately false so installation never consumes AI memory by default.
+    "ai_autostart": False,
+    "context_enabled": True,
+    "context_chars": 128,
+    "document_domain": "general",
+    "custom_instruction": "",
+    "lexical_grounding": True,
+    "compute_mode": "auto",
+}
+
+
+def product_data_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP")
+    if base:
+        return Path(base) / "YamatanaAIIME"
+    return Path(tempfile.gettempdir()) / "YamatanaAIIME"
+
+
+def default_settings_path() -> Path:
+    return product_data_dir() / "settings.json"
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
+
+
+def normalize_settings(raw: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    source = dict(raw or {})
+    result = dict(DEFAULT_SETTINGS)
+    result["ai_autostart"] = _as_bool(
+        source.get("ai_autostart"), DEFAULT_SETTINGS["ai_autostart"]
+    )
+    result["context_enabled"] = _as_bool(
+        source.get("context_enabled"), DEFAULT_SETTINGS["context_enabled"]
+    )
+    try:
+        context_chars = int(source.get("context_chars", DEFAULT_SETTINGS["context_chars"]))
+    except (TypeError, ValueError):
+        context_chars = int(DEFAULT_SETTINGS["context_chars"])
+    result["context_chars"] = min(CONTEXT_LENGTHS, key=lambda value: abs(value - context_chars))
+
+    domain = str(source.get("document_domain", DEFAULT_SETTINGS["document_domain"]))
+    result["document_domain"] = domain if domain in DOMAIN_PRESETS else "general"
+    instruction = str(source.get("custom_instruction", "")).strip()
+    # A local instruction is included in every scoring query.  Keep it short
+    # enough to preserve the model's token budget and IME latency.
+    result["custom_instruction"] = instruction[:500]
+    result["lexical_grounding"] = _as_bool(
+        source.get("lexical_grounding"), DEFAULT_SETTINGS["lexical_grounding"]
+    )
+    compute_mode = str(source.get("compute_mode", DEFAULT_SETTINGS["compute_mode"]))
+    result["compute_mode"] = compute_mode if compute_mode in COMPUTE_MODES else "auto"
+    result["schema"] = SETTINGS_SCHEMA
+    return result
+
+
+def load_settings(path: Optional[str | Path] = None) -> dict[str, Any]:
+    settings_path = Path(path) if path else default_settings_path()
+    try:
+        raw = json.loads(settings_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return dict(DEFAULT_SETTINGS)
+        return normalize_settings(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(settings: Mapping[str, Any], path: Optional[str | Path] = None) -> Path:
+    settings_path = Path(path) if path else default_settings_path()
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = normalize_settings(settings)
+    temporary = settings_path.with_suffix(settings_path.suffix + f".{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, settings_path)
+    return settings_path
+
+
+def domain_instruction(settings: Mapping[str, Any]) -> str:
+    normalized = normalize_settings(settings)
+    domain = normalized["document_domain"]
+    preset = DOMAIN_PRESETS[domain][1]
+    custom = normalized["custom_instruction"]
+    if domain == "custom":
+        return custom or DOMAIN_PRESETS["general"][1]
+    if custom:
+        return f"{preset} 追加指示: {custom}"
+    return preset
+
+
+def settings_runtime_signature(settings: Mapping[str, Any]) -> tuple[Any, ...]:
+    normalized = normalize_settings(settings)
+    return (
+        normalized["context_enabled"],
+        normalized["context_chars"],
+        normalized["document_domain"],
+        normalized["custom_instruction"],
+        normalized["lexical_grounding"],
+        normalized["compute_mode"],
+    )

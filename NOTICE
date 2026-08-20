@@ -1,0 +1,16 @@
+Yamatana AI IME (MOZC Ver)
+Copyright 2026 Yamatana AI IME contributors
+
+This product includes software developed by the Mozc project.
+Copyright 2010-2026, Google Inc. and Mozc contributors.
+
+This product includes the Ruri v3 reranker model developed by the
+CL Research Group in Nagoya, Japan. The distributed ONNX weights are a
+Yamatana IME-task derivative produced from that Apache-2.0 model.
+
+This product includes a homonym dictionary prepared by @ksasao from
+mecab-ipadic and mecab-ipadic-NEologd data. See THIRD_PARTY_LICENSES.md.
+
+Apache-2.0 applies only to Yamatana-owned source and model modifications.
+Third-party components remain under their respective licenses.
+

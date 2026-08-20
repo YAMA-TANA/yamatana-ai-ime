@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "bundle": {
+    "version": "v0.1.0",
+    "url": "https://github.com/YAMA-TANA/yamatana-ai-ime/releases/download/model-v0.1.0/yamatana-reranker-model-v0.1.0.zip",
+    "bytes": 755288425,
+    "sha256": "4086DE9DBA97C1A655BE3B8CA04C3E04D9AF21DB121AD3EEB0F6BC6DA11CE608"
+  },
+  "files": [
+    {
+      "path": "build/onnx-model/ruri-ime-fp16.onnx",
+      "bytes": 631044057,
+      "sha256": "9AE1695435179023BF96B6BE17164DC62932E06E1843799FD9771ADC563451FA"
+    },
+    {
+      "path": "build/onnx-model/ruri-ime-int8.onnx",
+      "bytes": 317664061,
+      "sha256": "B2334B5E1175A351699745408E5E8BE1ACC537B13863DC9973C418751823D065"
+    },
+    {
+      "path": "models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json",
+      "bytes": 6725126,
+      "sha256": "DE5307DD1171C748294224C016189C0FA364168AD4560736EC2BA5EC5A032657"
+    },
+    {
+      "path": "data/massive_homophone_database.json",
+      "bytes": 40354055,
+      "sha256": "D7D79FF354ECD790A44DAA1846495C786381E3948F2B3B0B0C645A9B8B1D28BA"
+    },
+    {
+      "path": "MODEL_CARD.md",
+      "bytes": 1871,
+      "sha256": "38A0CF38381CE6BB95FFFD4C7058B4F9CD3804F5D496DC5138A6E3C1F117A58D"
+    }
+  ]
+}
+

@@ -1,0 +1,29 @@
+name: SignPath submission (inactive until adoption)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: GitHub Actions artifact ID produced by Build unsigned MSI
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  submit:
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && vars.SIGNPATH_PROJECT_SLUG != '' && vars.SIGNPATH_SIGNING_POLICY_SLUG != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Submit existing GitHub-hosted artifact to SignPath
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ inputs.artifact_id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+

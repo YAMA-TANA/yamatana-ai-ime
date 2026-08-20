@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-test:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Validate pinned model manifest without downloading the model
+        shell: pwsh
+        run: ./scripts/fetch-model.ps1 -VerifyOnly
+      - name: Compile Python sources
+        run: python -m compileall -q ai_ime_tray.py ai_ime_gui.py onboarding_ui.py product_settings.py settings_ui.py client ranker tests
+      - name: Run tests
+        env:
+          YAMATANA_HEADLESS_TESTS: '1'
+        run: python -m pytest -q
+      - name: Reject tracked secrets, binaries, caches and personal paths
+        shell: pwsh
+        run: |
+          $bad = git ls-files | Select-String -Pattern '(^|/)(__pycache__|build|dist|release|models)/|\.(pfx|p12|pem|key|onnx|safetensors|msi|exe|dll|obj|log)$'
+          if ($bad) { $bad; throw 'Forbidden generated or secret-prone files are tracked' }
+          $personal = git grep -n -I -E 'C:\\Users\\|SIGNPATH_API_TOKEN[[:space:]]*[:=][[:space:]]*[^$]' -- . ':!.github/workflows/signpath.yml'
+          if ($LASTEXITCODE -eq 0 -and $personal) { $personal; throw 'Personal path or literal secret found' }
