@@ -43,3 +43,4 @@ jobs:
           if ($bad) { $bad; throw 'Forbidden generated or secret-prone files are tracked' }
           $personal = git grep -n -I -E 'C:\\Users\\|SIGNPATH_API_TOKEN[[:space:]]*[:=][[:space:]]*[^$]' -- . ':!.github/workflows/signpath.yml'
           if ($LASTEXITCODE -eq 0 -and $personal) { $personal; throw 'Personal path or literal secret found' }
+          exit 0
