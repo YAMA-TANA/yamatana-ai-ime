@@ -1,8 +1,8 @@
 {
   "mozc": {
-    "repository": "https://github.com/google/mozc.git",
-    "commit": "851c3fe33060d2a6090363e4d7ec44fafde2c03d"
+    "repository": "https://github.com/YAMA-TANA/mozc.git",
+    "commit": "45069e109dc1cff2dd55e5b26ef99c848f13ea58",
+    "upstream_commit": "851c3fe33060d2a6090363e4d7ec44fafde2c03d"
   },
   "model_manifest": "model-manifest.json"
 }
-

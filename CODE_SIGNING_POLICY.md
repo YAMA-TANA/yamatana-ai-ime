@@ -48,10 +48,9 @@
 - [x] CI artifactとReleaseのSHA-256を生成
 - [x] 署名方針とチーム役割を公開
 - [ ] 公開Releaseと継続的な開発履歴を蓄積
-- [ ] 改変Mozcの公開fork／レビュー履歴を確立
+- [x] 改変Mozcを [YAMA-TANA/mozc](https://github.com/YAMA-TANA/mozc/tree/yamatana-ai-ime-v0.1.0) の固定commitで公開
 - [ ] Branch protectionとprivate vulnerability reportingを有効化
 - [ ] SignPath Foundationへ申請し、発行された実ID／policyを設定
 - [ ] Artifact Configurationで製品名と全バイナリのversion metadataを強制
 
 SignPath Foundationの現行条件: https://signpath.org/terms.html
-

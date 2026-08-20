@@ -4,7 +4,7 @@
 
 | Component | Version / revision | License | Source / notes |
 |---|---:|---|---|
-| Mozc | `851c3fe33060d2a6090363e4d7ec44fafde2c03d` + Yamatana changes | BSD-3-Clause | https://github.com/google/mozc ; upstream copyright and notices retained |
+| Mozc | Yamatana commit `45069e109dc1cff2dd55e5b26ef99c848f13ea58` (upstream `851c3fe33060d2a6090363e4d7ec44fafde2c03d`) | BSD-3-Clause | https://github.com/YAMA-TANA/mozc/tree/yamatana-ai-ime-v0.1.0 ; upstream copyright and notices retained |
 | Ruri v3 reranker 310m | Hugging Face revision `bb46934ee9ed09f850b9fcff17501b3ef7ddb2b3` | Apache-2.0 | https://huggingface.co/cl-nagoya/ruri-v3-reranker-310m |
 | Yamatana IME LoRA/merged ONNX derivative | model bundle `v0.1.0`, fixed by `model-manifest.json` | Apache-2.0 | Fine-tuned and exported by this project; base attribution above |
 | @ksasao homonym dictionary | 2017-10-14 | Apache-2.0 | Derived from mecab-ipadic and mecab-ipadic-NEologd; original readme retained in `data/homonym_ksasao/readme.txt` |
@@ -28,4 +28,3 @@
 Microsoft Visual C++ Runtime and Windows SDK/System Libraries may be included or required under Microsoft redistribution terms. ATL source/header files are not committed to this repository; the build locates them from a licensed Visual Studio installation on the runner.
 
 Before each public Release, maintainers must compare the locked dependencies and the generated runtime contents with this table and preserve all required license texts/notices in the installer.
-
