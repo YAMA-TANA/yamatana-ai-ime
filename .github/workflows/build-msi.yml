@@ -32,6 +32,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: requirements-build.txt
       - name: Set up Bazelisk
         uses: bazel-contrib/setup-bazel@77a1d3d18379c7cb0a7e3b9fcaaa4d94f1029763 # 0.18.0
         with:
@@ -64,4 +65,3 @@ jobs:
           files: |
             release/Yamatana-AI-IME-MOZC-Ver-${{ inputs.release_label }}-x64.msi
             release/SHA256SUMS.txt
-
