@@ -10,7 +10,7 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $RepoRoot
 try {
   & (Join-Path $PSScriptRoot 'fetch-model.ps1')
-  if ($LASTEXITCODE -ne 0) { throw 'Model fetch failed' }
+  if (-not $?) { throw 'Model fetch failed' }
 
   python -m pip install --disable-pip-version-check -r requirements-build.txt
   if ($LASTEXITCODE -ne 0) { throw 'Python dependency installation failed' }
@@ -21,7 +21,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
 
   & (Join-Path $PSScriptRoot 'prepare_mozc_source.ps1') -SkipDependencyDownload:$SkipMozcDependencies
-  if ($LASTEXITCODE -ne 0) { throw 'Mozc source preparation failed' }
+  if (-not $?) { throw 'Mozc source preparation failed' }
   $MozcSrc = Join-Path $RepoRoot 'build\mozc-src\src'
   Push-Location $MozcSrc
   try {
