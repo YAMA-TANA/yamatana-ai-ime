@@ -36,6 +36,45 @@ QwenDependencyError = RuntimeError
 
 LOG = logging.getLogger("ai_ime_ranker")
 WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\"
+LOW_INTEGRITY_PIPE_SDDL = (
+    "D:P(A;;GA;;;SY)(A;;GA;;;OW)"
+    "S:(ML;;NW;;;LW)"
+)
+
+
+class _SecurityAttributes(ctypes.Structure):
+    _fields_ = [
+        ("length", ctypes.c_uint32),
+        ("security_descriptor", ctypes.c_void_p),
+        ("inherit_handle", ctypes.c_int),
+    ]
+
+
+def _low_integrity_pipe_security() -> tuple[_SecurityAttributes, ctypes.c_void_p]:
+    """Build same-owner pipe security that accepts Mozc's low-integrity token."""
+    if sys.platform != "win32":
+        raise OSError("Windows pipe security is available only on Windows")
+    advapi32 = ctypes.windll.advapi32
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = ctypes.c_int
+    descriptor = ctypes.c_void_p()
+    descriptor_size = ctypes.c_uint32()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        LOW_INTEGRITY_PIPE_SDDL,
+        1,  # SDDL_REVISION_1
+        ctypes.byref(descriptor),
+        ctypes.byref(descriptor_size),
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    attributes = _SecurityAttributes(
+        ctypes.sizeof(_SecurityAttributes), descriptor, False
+    )
+    return attributes, descriptor
 
 
 def normalize_windows_pipe_name(pipe_name: str) -> str:
@@ -227,6 +266,14 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
     k32.FlushFileBuffers.argtypes = [ctypes.c_void_p]
     k32.DisconnectNamedPipe.argtypes = [ctypes.c_void_p]
     k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    k32.LocalFree.restype = ctypes.c_void_p
+
+    try:
+        pipe_security, security_descriptor = _low_integrity_pipe_security()
+    except OSError as exc:
+        LOG.error("Could not create local pipe security descriptor: %s", exc)
+        return 2
 
     indicator = LoadingIndicator(text="AI変換中…", enabled=show_ui)
     indicator.start()
@@ -239,7 +286,7 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
             handle = k32.CreateNamedPipeW(
                 pipe_name, PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1, 65536, 65536, 0, None)
+                1, 65536, 65536, 0, ctypes.byref(pipe_security))
             if not handle or handle == INVALID_HANDLE_VALUE:
                 LOG.error("CreateNamedPipeW failed: %s", ctypes.get_last_error())
                 return 2
@@ -319,6 +366,7 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
                 k32.CloseHandle(handle)
     finally:
         indicator.stop()
+        k32.LocalFree(security_descriptor)
         if runtime_status is not None:
             runtime_status.write(state="off", stopped_at=time.time())
 
