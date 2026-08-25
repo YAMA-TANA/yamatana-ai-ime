@@ -30,6 +30,7 @@ from product_settings import (
     PRODUCT_NAME,
     default_settings_path,
     load_settings,
+    migrate_legacy_windows_autostart,
     product_data_dir,
     settings_runtime_signature,
 )
@@ -79,12 +80,13 @@ def _health_request() -> dict[str, Any]:
 
 
 class AIIMETray:
-    def __init__(self) -> None:
+    def __init__(self, allow_legacy_ranker: bool = False) -> None:
         self.state = "off"
         self.server_proc: Optional[subprocess.Popen[bytes]] = None
         self._stdout_handle = None
         self._stderr_handle = None
         self.last_error = ""
+        self.allow_legacy_ranker = allow_legacy_ranker
         self.settings = load_settings(SETTINGS_FILE)
         self._settings_signature = settings_runtime_signature(self.settings)
         self._watcher_stop = threading.Event()
@@ -162,6 +164,14 @@ class AIIMETray:
 
     def _start_server(self) -> None:
         if self._pipe_ready(20):
+            if self.allow_legacy_ranker and self._probe(1500):
+                self.allow_legacy_ranker = False
+                self._set_state("on")
+                self.icon.notify(
+                    "旧自動起動を移行しました。次回起動からトレイがAIランカーを管理します。",
+                    PRODUCT_NAME,
+                )
+                return
             self._set_state("error", "別のAIランカーが既に同じパイプを使用しています。")
             return
         self._set_state("loading")
@@ -444,7 +454,10 @@ def main() -> int:
         if ctypes.get_last_error() == 183:
             return 0
         globals()["_TRAY_MUTEX"] = mutex
-    AIIMETray().run(start_on=True if args.start_on else None)
+    migrated_legacy_autostart = migrate_legacy_windows_autostart(SETTINGS_FILE)
+    AIIMETray(allow_legacy_ranker=migrated_legacy_autostart).run(
+        start_on=True if args.start_on else None
+    )
     return 0
 
 

@@ -105,6 +105,7 @@ mozc_cc_test(
         ":ai_rewriter",
         ":rewriter_interface",
         "//converter:segments",
+        "//protocol:commands_cc_proto",
         "//request:conversion_request",
         "//testing:gunit_main",
     ],

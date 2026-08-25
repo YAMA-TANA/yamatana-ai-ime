@@ -19,17 +19,42 @@ AiRewriter::AiRewriter(std::wstring pipe_name)
 int AiRewriter::capability(const ConversionRequest& request) const {
   // Keep AI out of prediction/suggestion paths: conversion is the path whose
   // candidates are committed and for which a context rerank is useful.
-  (void)request;
+  // RealtimeDecoder invokes the converter with CONVERSION request type while
+  // the user is still typing.  It marks that internal request so expensive
+  // rewriters can stay off the latency-critical path.
+  if (request.options().skip_slow_rewriters) {
+    return RewriterInterface::NOT_AVAILABLE;
+  }
   return RewriterInterface::CONVERSION;
 }
 
 bool AiRewriter::Rewrite(const ConversionRequest& request,
                          Segments* segments) const {
+  // Keep the direct-call path safe too.  MergerRewriter normally checks
+  // capability(), but tests and other callers can invoke Rewrite directly.
+  if (request.options().skip_slow_rewriters) {
+    return false;
+  }
   if (segments == nullptr || segments->conversion_segments_size() == 0) {
     return false;
   }
   converter::Segment* segment = segments->mutable_conversion_segment(0);
   if (segment == nullptr || segment->candidates_size() < 2) return false;
+
+  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
+  // before the caret through ITfRange.  Mozc still retains recently committed
+  // segments in the conversion session, so use that privacy-local history as
+  // the context fallback instead of asking the model to rank context-free.
+  std::string preceding_text(request.context().preceding_text());
+  if (preceding_text.empty()) {
+    preceding_text = segments->history_value();
+  }
+  // With no preceding text there is no context to disambiguate homophones.
+  // Preserve Mozc's well-tuned dictionary order instead of asking the model
+  // to make a context-free guess.
+  if (preceding_text.empty()) {
+    return false;
+  }
 
   const size_t limit = std::min<size_t>(20, segment->candidates_size());
   std::vector<ai_ranker::CandidateInput> input;
@@ -42,14 +67,6 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
 
   ai_ranker::Client client(pipe_name_);
   std::vector<ai_ranker::RankedCandidate> ranked;
-  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
-  // before the caret through ITfRange.  Mozc still retains recently committed
-  // segments in the conversion session, so use that privacy-local history as
-  // the context fallback instead of asking the model to rank context-free.
-  std::string preceding_text(request.context().preceding_text());
-  if (preceding_text.empty()) {
-    preceding_text = segments->history_value();
-  }
   const bool rank_ok = client.Rank(
       preceding_text,
       std::string(segment->key().data(), segment->key().size()), input,

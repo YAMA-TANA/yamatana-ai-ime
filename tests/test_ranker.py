@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import importlib.util
 import math
@@ -12,7 +13,8 @@ import unittest
 
 from client.fallback import original_order, safe_rank
 from ranker.protocol import ProtocolError, loads_strict, validate_request, validate_response
-from ranker.ranker import (RuleBasedRanker, normalize_windows_pipe_name,
+from ranker.ranker import (RuleBasedRanker, _low_integrity_pipe_security,
+                           normalize_windows_pipe_name, process_line,
                            summarize_reorder)
 from ranker.qwen_ranker import QwenReranker
 from client.windows_pipe import rank_once as windows_rank_once
@@ -41,6 +43,34 @@ def request(context: str):
 
 
 class RankerTests(unittest.TestCase):
+    def test_context_free_request_preserves_mozc_order_without_model_call(self):
+        class UnexpectedRanker:
+            def rank(self, _request):
+                raise AssertionError("context-free request reached the model")
+
+        req = request("")
+        output = process_line(
+            (json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"),
+            UnexpectedRanker(),
+        )
+        self.assertIsNotNone(output)
+        response = loads_strict(output.decode("utf-8"))
+        validate_response(response, validate_request(req))
+        self.assertEqual(
+            [candidate["id"] for candidate in response["candidates"]],
+            ["c1", "c2", "c3"],
+        )
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows security descriptor")
+    def test_pipe_security_descriptor_allows_low_integrity_owner(self):
+        attributes, descriptor = _low_integrity_pipe_security()
+        try:
+            self.assertTrue(attributes.security_descriptor)
+            self.assertEqual(attributes.security_descriptor, descriptor.value)
+            self.assertTrue(ctypes.windll.advapi32.IsValidSecurityDescriptor(descriptor))
+        finally:
+            ctypes.windll.kernel32.LocalFree(descriptor)
+
     def test_windows_pipe_name_is_canonical(self):
         expected = r"\\.\pipe\ai_ime_ranker"
         self.assertEqual(normalize_windows_pipe_name("ai_ime_ranker"), expected)

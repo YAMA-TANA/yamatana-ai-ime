@@ -12,6 +12,8 @@ from typing import Any, Mapping, Optional
 PRODUCT_NAME = "Yamatana AI IME (MOZC Ver)"
 PRODUCT_VERSION = "1.0.0"
 SETTINGS_SCHEMA = 1
+LEGACY_AUTOSTART_VALUE_NAME = "Yamatana-AI-IME"
+WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 DOMAIN_PRESETS = {
     "general": ("一般", "自然で一般的な日本語として、文脈に合う表記を優先する。"),
@@ -113,6 +115,59 @@ def save_settings(settings: Mapping[str, Any], path: Optional[str | Path] = None
     )
     os.replace(temporary, settings_path)
     return settings_path
+
+
+def migrate_legacy_windows_autostart(
+    path: Optional[str | Path] = None,
+    *,
+    registry_module: Any = None,
+) -> bool:
+    """Remove the old direct-server startup entry and preserve AI autostart.
+
+    Older development installs launched ``YamatanaAIIME.exe --server`` from
+    HKCU while the MSI launches the tray from HKLM. When both entries remain,
+    the direct server wins the named-pipe race and the tray reports that a
+    different ranker owns the pipe. Only the exact legacy command shape is
+    migrated so an unrelated value with the same name is left untouched.
+    """
+    if registry_module is None:
+        if os.name != "nt":
+            return False
+        import winreg as registry_module
+
+    access = registry_module.KEY_QUERY_VALUE | registry_module.KEY_SET_VALUE
+    try:
+        key = registry_module.OpenKey(
+            registry_module.HKEY_CURRENT_USER,
+            WINDOWS_RUN_KEY,
+            0,
+            access,
+        )
+    except OSError:
+        return False
+
+    try:
+        try:
+            command, _value_type = registry_module.QueryValueEx(
+                key, LEGACY_AUTOSTART_VALUE_NAME
+            )
+        except OSError:
+            return False
+        normalized = str(command).casefold()
+        if not all(
+            marker in normalized
+            for marker in ("yamatanaaiime.exe", "--server", "ai_ime_ranker")
+        ):
+            return False
+        registry_module.DeleteValue(key, LEGACY_AUTOSTART_VALUE_NAME)
+    finally:
+        registry_module.CloseKey(key)
+
+    settings = load_settings(path)
+    if not settings["ai_autostart"]:
+        settings["ai_autostart"] = True
+        save_settings(settings, path)
+    return True
 
 
 def domain_instruction(settings: Mapping[str, Any]) -> str:
