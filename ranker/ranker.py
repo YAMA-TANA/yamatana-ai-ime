@@ -198,7 +198,23 @@ def process_line(line: bytes, ranker: Any) -> Optional[bytes]:
             raise ProtocolError("JSON line is too large")
         request = loads_strict(line.decode("utf-8"))
         req_val = validate_request(request)
-        response = ranker.rank(request)
+        if not req_val["preceding_text"]:
+            # Context-free ranking has no information with which to improve
+            # Mozc's dictionary order.  Keep the original order and avoid an
+            # unnecessary model invocation, including for legacy clients.
+            response = {
+                "request_id": req_val["request_id"],
+                "candidates": [
+                    {
+                        "id": candidate["id"],
+                        "score": float(-candidate["rank"]),
+                        "rank": candidate["rank"],
+                    }
+                    for candidate in req_val["candidates"]
+                ],
+            }
+        else:
+            response = ranker.rank(req_val)
         # Normalize and validate our own response before it crosses the trust boundary.
         clean_response = {
             "request_id": response["request_id"],

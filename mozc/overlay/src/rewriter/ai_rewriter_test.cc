@@ -4,6 +4,7 @@
 
 #include "converter/candidate.h"
 #include "converter/segments.h"
+#include "protocol/commands.pb.h"
 #include "request/conversion_request.h"
 #include "rewriter/rewriter_interface.h"
 #include "testing/gunit.h"
@@ -38,7 +39,7 @@ TEST(AiRewriterTest, RealtimeConversionSkipsAiRanker) {
   EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
 }
 
-TEST(AiRewriterTest, RankerFailurePreservesMozcOrder) {
+TEST(AiRewriterTest, NoContextPreservesMozcOrder) {
   Segments segments;
   Segment* segment = segments.add_segment();
   segment->set_key("hana");
@@ -51,6 +52,28 @@ TEST(AiRewriterTest, RankerFailurePreservesMozcOrder) {
 
   AiRewriter rewriter(L"missing-ai-ime-pipe");
   const ConversionRequest request;
+  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
+  ASSERT_EQ(segments.segment(0).candidates_size(), 2);
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
+  EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
+}
+
+TEST(AiRewriterTest, RankerFailureWithContextPreservesMozcOrder) {
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("hana");
+  converter::Candidate* first = segment->add_candidate();
+  first->key = "hana";
+  first->value = "花";
+  converter::Candidate* second = segment->add_candidate();
+  second->key = "hana";
+  second->value = "鼻";
+
+  commands::Context context;
+  context.set_preceding_text("象の長い");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(L"missing-ai-ime-pipe");
   EXPECT_FALSE(rewriter.Rewrite(request, &segments));
   ASSERT_EQ(segments.segment(0).candidates_size(), 2);
   EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
