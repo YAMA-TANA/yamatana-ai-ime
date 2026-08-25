@@ -5,14 +5,28 @@ import sys
 from pathlib import Path
 
 ROOT = Path(os.path.abspath(".")).resolve()
+INSTALLED_RUNTIME = Path(os.environ.get(
+    "YAMATANA_INSTALLED_RUNTIME",
+    r"C:\Program Files (x86)\Yamatana AI IME\ai_runtime\_internal",
+))
+
+
+def asset(local_path, installed_path):
+    local = ROOT / local_path
+    if local.exists():
+        return str(local)
+    installed = INSTALLED_RUNTIME / installed_path
+    if installed.exists():
+        return str(installed)
+    return str(local)
 
 block_cipher = None
 
 all_datas = [
-    ('build/onnx-model/ruri-ime-fp16.onnx', 'models/onnx'),
-    ('build/onnx-model/ruri-ime-int8.onnx', 'models/onnx'),
-    ('models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json', 'models/onnx'),
-    ('data/massive_homophone_database.json', 'data'),
+    (asset('build/onnx-model/ruri-ime-fp16.onnx', 'models/onnx/ruri-ime-fp16.onnx'), 'models/onnx'),
+    (asset('build/onnx-model/ruri-ime-int8.onnx', 'models/onnx/ruri-ime-int8.onnx'), 'models/onnx'),
+    (asset('models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json', 'models/onnx/tokenizer.json'), 'models/onnx'),
+    (asset('data/massive_homophone_database.json', 'data/massive_homophone_database.json'), 'data'),
     ('PRIVACY.md', 'documents'),
     ('LICENSE', 'documents'),
     ('NOTICE', 'documents'),

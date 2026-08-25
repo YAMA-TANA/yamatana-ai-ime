@@ -13,7 +13,8 @@ import unittest
 
 from client.fallback import original_order, safe_rank
 from ranker.protocol import ProtocolError, loads_strict, validate_request, validate_response
-from ranker.ranker import (RuleBasedRanker, _low_integrity_pipe_security,
+from ranker.ranker import (InteractiveBurstGuard, RuleBasedRanker,
+                           _low_integrity_pipe_security,
                            normalize_windows_pipe_name, process_line,
                            summarize_reorder)
 from ranker.qwen_ranker import QwenReranker
@@ -43,6 +44,40 @@ def request(context: str):
 
 
 class RankerTests(unittest.TestCase):
+    def test_interactive_burst_guard_defers_ai_until_request_settles(self):
+        class FakeRanker:
+            def __init__(self):
+                self.calls = 0
+
+            def rank(self, req):
+                self.calls += 1
+                candidates = list(reversed(req["candidates"]))
+                return {
+                    "request_id": req["request_id"],
+                    "candidates": [
+                        {"id": item["id"], "score": 10.0 - rank, "rank": rank}
+                        for rank, item in enumerate(candidates, start=1)
+                    ],
+                }
+
+        delegate = FakeRanker()
+        guard = InteractiveBurstGuard(delegate, settle_seconds=0.01)
+        req = request("庭には美しい")
+        first = guard.rank(req)
+        self.assertEqual([item["id"] for item in first["candidates"]], ["c1", "c2", "c3"])
+        self.assertEqual(delegate.calls, 0)
+
+        time.sleep(0.02)
+        req["request_id"] = "test-2"
+        settled = guard.rank(req)
+        self.assertEqual([item["id"] for item in settled["candidates"]], ["c3", "c2", "c1"])
+        self.assertEqual(delegate.calls, 1)
+
+        req["request_id"] = "test-3"
+        cached = guard.rank(req)
+        self.assertEqual(cached["request_id"], "test-3")
+        self.assertEqual(delegate.calls, 1)
+
     def test_context_free_request_preserves_mozc_order_without_model_call(self):
         class UnexpectedRanker:
             def rank(self, _request):

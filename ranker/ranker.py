@@ -192,6 +192,78 @@ class RuleBasedRanker:
         return {"request_id": request["request_id"], "candidates": result}
 
 
+class InteractiveBurstGuard:
+    """Keep typing responsive and run the model for a settled conversion."""
+
+    def __init__(
+        self,
+        delegate: Any,
+        *,
+        settle_seconds: float = 0.075,
+        forget_seconds: float = 2.0,
+    ) -> None:
+        self._delegate = delegate
+        self.settle_seconds = max(0.0, float(settle_seconds))
+        self.forget_seconds = max(self.settle_seconds, float(forget_seconds))
+        self._first_seen: Dict[tuple[Any, ...], float] = {}
+        self._ranked: Dict[tuple[Any, ...], list[Dict[str, Any]]] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    @staticmethod
+    def _key(request: Dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            request["preceding_text"],
+            request.get("following_text", ""),
+            request["read"],
+            tuple(
+                (candidate["id"], candidate["text"], candidate["rank"])
+                for candidate in request["candidates"]
+            ),
+        )
+
+    @staticmethod
+    def _original_order(request: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "request_id": request["request_id"],
+            "candidates": [
+                {
+                    "id": candidate["id"],
+                    "score": float(-candidate["rank"]),
+                    "rank": candidate["rank"],
+                }
+                for candidate in request["candidates"]
+            ],
+        }
+
+    def rank(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        request = validate_request(request)
+        now = time.perf_counter()
+        key = self._key(request)
+        for old_key, seen_at in tuple(self._first_seen.items()):
+            if now - seen_at > self.forget_seconds:
+                self._first_seen.pop(old_key, None)
+                self._ranked.pop(old_key, None)
+
+        if key in self._ranked:
+            return {
+                "request_id": request["request_id"],
+                "candidates": self._ranked[key],
+            }
+
+        first_seen = self._first_seen.get(key)
+        if first_seen is None:
+            self._first_seen[key] = now
+            return self._original_order(request)
+        if now - first_seen < self.settle_seconds:
+            return self._original_order(request)
+
+        response = self._delegate.rank(request)
+        self._ranked[key] = response["candidates"]
+        return response
+
+
 def process_line(line: bytes, ranker: Any) -> Optional[bytes]:
     try:
         if len(line) > MAX_LINE_BYTES:
@@ -475,6 +547,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 (time.perf_counter() - load_started) * 1000.0,
                 ranker.device,
             )
+            ranker = InteractiveBurstGuard(ranker)
         elif args.backend == "ruri":
             try:
                 from .ruri_ranker import RuriReranker
