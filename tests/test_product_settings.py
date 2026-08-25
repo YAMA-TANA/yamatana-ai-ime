@@ -6,12 +6,37 @@ from pathlib import Path
 
 from product_settings import (
     DEFAULT_SETTINGS,
+    LEGACY_AUTOSTART_VALUE_NAME,
     domain_instruction,
     load_settings,
+    migrate_legacy_windows_autostart,
     normalize_settings,
     save_settings,
     settings_runtime_signature,
 )
+
+
+class FakeRegistry:
+    HKEY_CURRENT_USER = object()
+    KEY_QUERY_VALUE = 1
+    KEY_SET_VALUE = 2
+
+    def __init__(self, command: str) -> None:
+        self.command = command
+        self.deleted: list[str] = []
+        self.closed = False
+
+    def OpenKey(self, *_args):
+        return object()
+
+    def QueryValueEx(self, _key, _name):
+        return self.command, 1
+
+    def DeleteValue(self, _key, name):
+        self.deleted.append(name)
+
+    def CloseKey(self, _key):
+        self.closed = True
 
 
 class ProductSettingsTests(unittest.TestCase):
@@ -69,6 +94,32 @@ class ProductSettingsTests(unittest.TestCase):
         first = dict(DEFAULT_SETTINGS)
         second = {**first, "ai_autostart": True}
         self.assertEqual(settings_runtime_signature(first), settings_runtime_signature(second))
+
+    def test_legacy_direct_server_autostart_is_migrated(self) -> None:
+        registry = FakeRegistry(
+            r'"C:\Program Files (x86)\Yamatana AI IME\ai_runtime\YamatanaAIIME.exe" '
+            r'--server --pipe "\\.\pipe\ai_ime_ranker" --no-ui'
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            migrated = migrate_legacy_windows_autostart(
+                path, registry_module=registry
+            )
+            settings = load_settings(path)
+        self.assertTrue(migrated)
+        self.assertEqual(registry.deleted, [LEGACY_AUTOSTART_VALUE_NAME])
+        self.assertTrue(registry.closed)
+        self.assertTrue(settings["ai_autostart"])
+
+    def test_unrelated_autostart_value_is_not_removed(self) -> None:
+        registry = FakeRegistry(r'"C:\Tools\other.exe" --server')
+        with tempfile.TemporaryDirectory() as temp:
+            migrated = migrate_legacy_windows_autostart(
+                Path(temp) / "settings.json", registry_module=registry
+            )
+        self.assertFalse(migrated)
+        self.assertEqual(registry.deleted, [])
+        self.assertTrue(registry.closed)
 
 
 if __name__ == "__main__":
