@@ -131,9 +131,9 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   // Pre-count the segments we may rerank so the budget is shared fairly.
   size_t rerankable_segments = 0;
   for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {
-    const converter::Segment* seg = segments->conversion_segment(i);
-    if (seg != nullptr && seg->segment_type() == converter::Segment::FREE &&
-        seg->candidates_size() >= 2) {
+    const converter::Segment& seg = segments->conversion_segment(i);
+    if (seg.segment_type() == converter::Segment::FREE &&
+      seg.candidates_size() >= 2) {
       ++rerankable_segments;
     }
   }
@@ -180,13 +180,13 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
     std::string following_text = trailing_text;
     for (size_t later = index + 1;
          later < segments->conversion_segments_size(); ++later) {
-      const converter::Segment* later_seg = segments->conversion_segment(later);
-      if (later_seg == nullptr || later_seg->candidates_size() == 0) {
+      const converter::Segment& later_seg = segments->conversion_segment(later);
+      if (later_seg.candidates_size() == 0) {
         continue;
       }
       following_text.append(
-          std::string(later_seg->candidate(0).value.data(),
-                      later_seg->candidate(0).value.size()));
+          std::string(later_seg.candidate(0).value.data(),
+                      later_seg.candidate(0).value.size()));
     }
 
     const int remaining_ms = RemainingBudgetMs(deadline);

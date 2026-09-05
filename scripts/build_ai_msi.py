@@ -11,7 +11,9 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MOZC = ROOT / "build" / "mozc-src" / "src"
+MOZC = Path(
+    os.environ.get("YAMATANA_MOZC_ROOT", str(ROOT / "build" / "mozc-src"))
+).resolve() / "src"
 RUNTIME = ROOT / "dist" / "YamatanaAIIME"
 BUILD_DIR = ROOT / "build" / "distribution-msi"
 RELEASE_DIR = ROOT / "release"
