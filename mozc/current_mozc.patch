@@ -998,6 +998,98 @@ index 7f6049da..36c00ddb 100644
          ":custom_action_resource",  # buildcleaner: keep
          "//base:const",
          "//base:process",
+diff --git a/src/win32/custom_action/custom_action.cc b/src/win32/custom_action/custom_action.cc
+index 7dc47c2f..54a08f66 100644
+--- a/src/win32/custom_action/custom_action.cc
++++ b/src/win32/custom_action/custom_action.cc
+@@ -86,7 +86,22 @@ using mozc::win32::OmahaUtil;
+ 
+ HMODULE g_module = nullptr;
+ 
+-std::wstring GetMozcComponentPath(const absl::string_view filename) {
++std::wstring GetProperty(MSIHANDLE msi, std::wstring_view name);
++
++std::wstring GetMozcComponentPath(MSIHANDLE msi_handle,
++                                  const absl::string_view filename) {
++  // Deferred installer actions receive the real MSI destination through
++  // CustomActionData.  Do not derive it from an existing Mozc TIP registry
++  // entry: that entry can point at an uninstalled or differently branded
++  // Mozc directory and would make the newly installed TIP unloadable.
++  std::wstring install_dir = GetProperty(msi_handle, L"CustomActionData");
++  if (!install_dir.empty()) {
++    if (install_dir.back() != L'\\' && install_dir.back() != L'/') {
++      install_dir.push_back(L'\\');
++    }
++    install_dir.append(mozc::win32::Utf8ToWide(filename));
++    return install_dir;
++  }
+   return mozc::win32::Utf8ToWide(
+       absl::StrCat(mozc::SystemUtil::GetServerDirectory(), "\\", filename));
+ }
+@@ -211,22 +226,22 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD ul_reason_for_call,
+ UINT __stdcall EnsureAllApplicationPackagesPermisssions(MSIHANDLE msi_handle) {
+   DEBUG_BREAK_FOR_DEBUGGER();
+   if (!mozc::WinSandbox::EnsureAllApplicationPackagesPermisssion(
+-          GetMozcComponentPath(mozc::kMozcServerName),
++          GetMozcComponentPath(msi_handle, mozc::kMozcServerName),
+           mozc::WinSandbox::AppContainerVisibilityType::kProgramFiles)) {
+     return ERROR_INSTALL_FAILURE;
+   }
+   if (!mozc::WinSandbox::EnsureAllApplicationPackagesPermisssion(
+-          GetMozcComponentPath(mozc::kMozcRenderer),
++          GetMozcComponentPath(msi_handle, mozc::kMozcRenderer),
+           mozc::WinSandbox::AppContainerVisibilityType::kProgramFiles)) {
+     return ERROR_INSTALL_FAILURE;
+   }
+   if (!mozc::WinSandbox::EnsureAllApplicationPackagesPermisssion(
+-          GetMozcComponentPath(mozc::kMozcTIP32),
++          GetMozcComponentPath(msi_handle, mozc::kMozcTIP32),
+           mozc::WinSandbox::AppContainerVisibilityType::kProgramFiles)) {
+     return ERROR_INSTALL_FAILURE;
+   }
+   if (!mozc::WinSandbox::EnsureAllApplicationPackagesPermisssion(
+-          GetMozcComponentPath(mozc::kMozcTIP64),
++          GetMozcComponentPath(msi_handle, mozc::kMozcTIP64),
+           mozc::WinSandbox::AppContainerVisibilityType::kProgramFiles)) {
+     return ERROR_INSTALL_FAILURE;
+   }
+@@ -353,6 +368,18 @@ UINT __stdcall FixupConfigFilePermission(MSIHANDLE msi_handle) {
+ 
+ UINT __stdcall SaveCustomActionData(MSIHANDLE msi_handle) {
+   DEBUG_BREAK_FOR_DEBUGGER();
++  // A property whose name matches a deferred custom action becomes that
++  // action's CustomActionData.  Both actions need the actual MSI destination
++  // instead of Mozc's compile-time/default installation directory.
++  const std::wstring install_dir = GetProperty(msi_handle, L"MozcDir");
++  if (install_dir.empty() ||
++      !SetProperty(msi_handle, L"RegisterTIP64", install_dir) ||
++      !SetProperty(msi_handle, L"EnsureAllApplicationPackagesPermisssions",
++                   install_dir)) {
++    LOG_ERROR_FOR_OMAHA();
++    return ERROR_INSTALL_FAILURE;
++  }
++
+   // store the CHANNEL value specified in the command line argument for
+   // WriteApValue.
+   const std::wstring channel = GetProperty(msi_handle, L"CHANNEL");
+@@ -462,6 +489,7 @@ UINT __stdcall RegisterTIP(MSIHANDLE msi_handle) {
+   const bool is_arm64_machine =
+       SUCCEEDED(result) && native_machine == IMAGE_FILE_MACHINE_ARM64;
+   const std::wstring tip64_path = GetMozcComponentPath(
++      msi_handle,
+       is_arm64_machine ? mozc::kMozcTIP64X : mozc::kMozcTIP64);
+ 
+   result = mozc::win32::TsfRegistrar::RegisterCOMServer(
+@@ -474,7 +502,8 @@ UINT __stdcall RegisterTIP(MSIHANDLE msi_handle) {
+   }
+ 
+   // Register 32-bit TIP COM server.
+-  const std::wstring tip32_path = GetMozcComponentPath(mozc::kMozcTIP32);
++  const std::wstring tip32_path =
++      GetMozcComponentPath(msi_handle, mozc::kMozcTIP32);
+   result = mozc::win32::TsfRegistrar::RegisterCOMServer(
+       tip32_path.c_str(), tip32_path.length(),
+       mozc::win32::COMServerBitness::k32bit);
 diff --git a/src/win32/installer/installer_oss_64bit.wxs b/src/win32/installer/installer_oss_64bit.wxs
 index b3b308e6..2f4c4a34 100644
 --- a/src/win32/installer/installer_oss_64bit.wxs
