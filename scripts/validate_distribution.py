@@ -8,6 +8,11 @@ import os
 from pathlib import Path
 import msilib
 
+try:
+    from scripts.release_version import DEFAULT_PRODUCT_VERSION
+except ModuleNotFoundError:  # Direct execution: python scripts/validate_distribution.py
+    from release_version import DEFAULT_PRODUCT_VERSION
+
 
 def query_one(database: msilib.Database, sql: str) -> tuple[str, ...]:
     view = database.OpenView(sql)
@@ -18,11 +23,18 @@ def query_one(database: msilib.Database, sql: str) -> tuple[str, ...]:
     return tuple(record.GetString(index) for index in range(1, record.GetFieldCount() + 1))
 
 
+def assert_no_row(database: msilib.Database, sql: str) -> None:
+    view = database.OpenView(sql)
+    view.Execute(None)
+    if view.Fetch() is not None:
+        raise AssertionError(f"Unexpected MSI row: {sql}")
+
+
 def validate(msi_path: Path, admin_root: Path) -> None:
     database = msilib.OpenDatabase(str(msi_path), msilib.MSIDBOPEN_READONLY)
     expected_properties = {
         "ProductName": "Yamatana AI IME (MOZC Ver)",
-        "ProductVersion": os.environ.get("YAMATANA_PRODUCT_VERSION", "0.1.0.0"),
+        "ProductVersion": os.environ.get("YAMATANA_PRODUCT_VERSION", DEFAULT_PRODUCT_VERSION),
         "Manufacturer": "Yamatana",
         "UpgradeCode": "{A9FD6996-83DE-4DBE-9BE9-8C7F9016493A}",
     }
@@ -34,6 +46,16 @@ def validate(msi_path: Path, admin_root: Path) -> None:
         if actual != expected:
             raise AssertionError(f"{name}: expected {expected!r}, got {actual!r}")
 
+    runtime_file_version = query_one(
+        database,
+        "SELECT `Version` FROM `File` WHERE `File`='YamatanaAIIME.exe'",
+    )[0]
+    if runtime_file_version != expected_properties["ProductVersion"]:
+        raise AssertionError(
+            "YamatanaAIIME.exe file version must match MSI ProductVersion: "
+            f"expected {expected_properties['ProductVersion']!r}, got {runtime_file_version!r}"
+        )
+
     startup = query_one(
         database,
         "SELECT `Value` FROM `Registry` WHERE `Registry`='RunYamatanaAIIME'",
@@ -41,7 +63,7 @@ def validate(msi_path: Path, admin_root: Path) -> None:
     if "YamatanaAIIME.exe" not in startup:
         raise AssertionError(f"Unexpected startup command: {startup}")
 
-    for action in ("RegisterTIP64", "UnregisterTIP64", "LaunchYamatanaTray"):
+    for action in ("RegisterTIP64", "UnregisterTIP64"):
         query_one(
             database,
             f"SELECT `Type`, `Source`, `Target` FROM `CustomAction` WHERE `Action`='{action}'",
@@ -50,6 +72,18 @@ def validate(msi_path: Path, admin_root: Path) -> None:
             database,
             f"SELECT `Sequence` FROM `InstallExecuteSequence` WHERE `Action`='{action}'",
         )
+    # The tray starts through the Run registry value at the next sign-in.
+    # Launching it from a deferred/elevated MSI transaction produced an
+    # invisible or wrong-session process, so packaging deliberately strips
+    # both rows from the Mozc installer template.
+    assert_no_row(
+        database,
+        "SELECT `Action` FROM `CustomAction` WHERE `Action`='LaunchYamatanaTray'",
+    )
+    assert_no_row(
+        database,
+        "SELECT `Action` FROM `InstallExecuteSequence` WHERE `Action`='LaunchYamatanaTray'",
+    )
     query_one(
         database,
         "SELECT `Name` FROM `Binary` WHERE `Name`='mozc_installer_helper.dll'",

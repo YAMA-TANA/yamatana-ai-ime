@@ -9,6 +9,11 @@ from pathlib import Path
 import shutil
 import subprocess
 
+try:
+    from scripts.release_version import DEFAULT_PRODUCT_VERSION, DEFAULT_RELEASE_LABEL
+except ModuleNotFoundError:  # Direct execution: python scripts/build_ai_msi.py
+    from release_version import DEFAULT_PRODUCT_VERSION, DEFAULT_RELEASE_LABEL
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MOZC = Path(
@@ -17,8 +22,8 @@ MOZC = Path(
 RUNTIME = ROOT / "dist" / "YamatanaAIIME"
 BUILD_DIR = ROOT / "build" / "distribution-msi"
 RELEASE_DIR = ROOT / "release"
-PRODUCT_VERSION = os.environ.get("YAMATANA_PRODUCT_VERSION", "0.1.0.0")
-RELEASE_LABEL = os.environ.get("YAMATANA_RELEASE_LABEL", "0.1.0-beta")
+PRODUCT_VERSION = os.environ.get("YAMATANA_PRODUCT_VERSION", DEFAULT_PRODUCT_VERSION)
+RELEASE_LABEL = os.environ.get("YAMATANA_RELEASE_LABEL", DEFAULT_RELEASE_LABEL)
 MSI_OUT = RELEASE_DIR / f"Yamatana-AI-IME-MOZC-Ver-{RELEASE_LABEL}-x64.msi"
 UPGRADE_CODE = "A9FD6996-83DE-4DBE-9BE9-8C7F9016493A"
 

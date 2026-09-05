@@ -10,7 +10,7 @@ from typing import Any, Mapping, Optional
 
 
 PRODUCT_NAME = "Yamatana AI IME (MOZC Ver)"
-PRODUCT_VERSION = "1.0.0"
+PRODUCT_VERSION = "0.1.1-beta"
 SETTINGS_SCHEMA = 1
 LEGACY_AUTOSTART_VALUE_NAME = "Yamatana-AI-IME"
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"

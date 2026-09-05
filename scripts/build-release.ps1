@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$ProductVersion = '0.1.0.0',
-  [string]$ReleaseLabel = '0.1.0-beta',
+  [string]$ProductVersion = '1.0.4.0',
+  [string]$ReleaseLabel = '0.1.1-beta',
   [switch]$SkipMozcDependencies
 )
 
@@ -9,6 +9,11 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $RepoRoot
 try {
+  # Set these before PyInstaller so the EXE file version advances together
+  # with the MSI ProductVersion. Windows Installer otherwise retains an older
+  # same-version runtime during a major upgrade.
+  $env:YAMATANA_PRODUCT_VERSION = $ProductVersion
+  $env:YAMATANA_RELEASE_LABEL = $ReleaseLabel
   & (Join-Path $PSScriptRoot 'fetch-model.ps1')
   if (-not $?) { throw 'Model fetch failed' }
 
@@ -52,8 +57,6 @@ try {
   wix extension add WixToolset.UI.wixext/4.0.5 --global
   if ($LASTEXITCODE -ne 0) { throw 'WiX UI extension installation failed' }
 
-  $env:YAMATANA_PRODUCT_VERSION = $ProductVersion
-  $env:YAMATANA_RELEASE_LABEL = $ReleaseLabel
   python scripts/build_ai_msi.py
   if ($LASTEXITCODE -ne 0) { throw 'MSI build failed' }
 

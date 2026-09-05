@@ -4,7 +4,18 @@ import os
 import sys
 from pathlib import Path
 
+from scripts.release_version import (
+    DEFAULT_PRODUCT_VERSION,
+    DEFAULT_RELEASE_LABEL,
+    write_pyinstaller_version_info,
+)
+
 ROOT = Path(os.path.abspath(".")).resolve()
+VERSION_INFO = write_pyinstaller_version_info(
+    ROOT / "build" / "pyinstaller-version-info.txt",
+    os.environ.get("YAMATANA_PRODUCT_VERSION", DEFAULT_PRODUCT_VERSION),
+    os.environ.get("YAMATANA_RELEASE_LABEL", DEFAULT_RELEASE_LABEL),
+)
 INSTALLED_RUNTIME = Path(os.environ.get(
     "YAMATANA_INSTALLED_RUNTIME",
     r"C:\Program Files (x86)\Yamatana AI IME\ai_runtime\_internal",
@@ -96,7 +107,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    version=str(ROOT / 'scripts' / 'version_info.txt'),
+    version=str(VERSION_INFO),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
