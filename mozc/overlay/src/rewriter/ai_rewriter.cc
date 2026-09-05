@@ -94,7 +94,8 @@ int AiRewriter::capability(const ConversionRequest& request) const {
   // RealtimeDecoder invokes the converter with CONVERSION request type while
   // the user is still typing.  It marks that internal request so expensive
   // rewriters can stay off the latency-critical path.
-  if (request.options().skip_slow_rewriters) {
+  if (request.options().skip_slow_rewriters ||
+      request.options().used_in_predictor_realtime_conversion) {
     return RewriterInterface::NOT_AVAILABLE;
   }
   return RewriterInterface::CONVERSION;
@@ -104,7 +105,8 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
                          Segments* segments) const {
   // Keep the direct-call path safe too.  MergerRewriter normally checks
   // capability(), but tests and other callers can invoke Rewrite directly.
-  if (request.options().skip_slow_rewriters) {
+  if (request.options().skip_slow_rewriters ||
+      request.options().used_in_predictor_realtime_conversion) {
     return false;
   }
   if (segments == nullptr || segments->conversion_segments_size() == 0) {

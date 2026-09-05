@@ -2,7 +2,7 @@
 
 Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替えるWindows向け日本語IMEです。文脈、文書分野、ユーザー辞書相当の語彙情報を変換判断に使いながら、入力内容を外部へ送信しません。
 
-> **Beta / 未署名** — `v0.1.1-beta` は検証用の未署名Betaです。Windowsの警告が表示される場合があります。現在はSignPath Foundationによる署名を申請する前段階であり、署名済みであるかのような表示は行いません。
+> **Beta / 未署名** — `v0.1.2-beta` は検証用の未署名Betaです。Windowsの警告が表示される場合があります。現在はSignPath Foundationによる署名を申請する前段階であり、署名済みであるかのような表示は行いません。
 
 ## 特徴
 
@@ -27,7 +27,7 @@ Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替�
 ## インストール
 
 1. [Releases](https://github.com/YAMA-TANA/yamatana-ai-ime/releases) から最新の `.msi` と `SHA256SUMS.txt` をダウンロードします。
-2. PowerShellで `Get-FileHash .\Yamatana-AI-IME-MOZC-Ver-0.1.1-beta-x64.msi -Algorithm SHA256` を実行し、公開ハッシュと一致することを確認します。
+2. PowerShellで `Get-FileHash .\Yamatana-AI-IME-MOZC-Ver-0.1.2-beta-x64.msi -Algorithm SHA256` を実行し、公開ハッシュと一致することを確認します。
 3. MSIをダブルクリックし、プライバシー説明を確認してインストールします。
 4. サインアウトまたは再起動後、`Win + Space` で **Yamatana AI IME (MOZC Ver)** を選択します。
 5. 通知領域のYamatanaアイコンを開き、必要なときだけ **AIをON** にします。初期状態はOFFです。アイコンが隠れている場合は、タスクバーの `^` を開いてください。

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$ProductVersion = '1.0.4.0',
-  [string]$ReleaseLabel = '0.1.1-beta',
+  [string]$ProductVersion = '1.0.5.0',
+  [string]$ReleaseLabel = '0.1.2-beta',
   [switch]$SkipMozcDependencies
 )
 

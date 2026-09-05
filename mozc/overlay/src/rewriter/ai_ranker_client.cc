@@ -222,6 +222,7 @@ bool Client::Rank(const std::string& preceding_text,
   std::string escaped;
   if (!EscapeJson(preceding_text, &escaped)) return false;
   json << "{\"request_id\":\"" << request_id
+       << "\",\"inference_trigger\":\"explicit"
        << "\",\"preceding_text\":\"" << escaped
        << "\",\"following_text\":";
   if (!EscapeJson(following_text, &escaped)) return false;

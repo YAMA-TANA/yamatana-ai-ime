@@ -39,6 +39,23 @@ TEST(AiRewriterTest, RealtimeConversionSkipsAiRanker) {
   EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
 }
 
+TEST(AiRewriterTest, PredictorRealtimeMarkerSkipsAiRanker) {
+  ConversionRequest::Options options;
+  options.request_type = ConversionRequest::CONVERSION;
+  options.used_in_predictor_realtime_conversion = true;
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetOptions(std::move(options)).Build();
+
+  AiRewriter rewriter(L"missing-ai-ime-pipe");
+  EXPECT_EQ(rewriter.capability(request), RewriterInterface::NOT_AVAILABLE);
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->add_candidate()->value = "花";
+  segment->add_candidate()->value = "鼻";
+  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
+}
+
 TEST(AiRewriterTest, NoContextPreservesMozcOrder) {
   Segments segments;
   Segment* segment = segments.add_segment();

@@ -197,13 +197,13 @@ class RuleBasedRanker:
 
 
 class InteractiveBurstGuard:
-    """Keep typing responsive and run the model for a settled conversion."""
+    """Run explicit conversion now; debounce legacy interactive requests."""
 
     def __init__(
         self,
         delegate: Any,
         *,
-        settle_seconds: float = 0.075,
+        settle_seconds: float = 0.5,
         forget_seconds: float = 2.0,
     ) -> None:
         self._delegate = delegate
@@ -218,6 +218,7 @@ class InteractiveBurstGuard:
     @staticmethod
     def _key(request: Dict[str, Any]) -> tuple[Any, ...]:
         return (
+            request.get("inference_trigger", "interactive"),
             request["preceding_text"],
             request.get("following_text", ""),
             request["read"],
@@ -243,6 +244,11 @@ class InteractiveBurstGuard:
 
     def rank(self, request: Dict[str, Any]) -> Dict[str, Any]:
         request = validate_request(request)
+        # New Mozc clients label a Space/Convert operation explicitly. It must
+        # not wait for the compatibility debounce used by older clients.
+        if request["inference_trigger"] == "explicit":
+            return self._delegate.rank(request)
+
         now = time.perf_counter()
         key = self._key(request)
         for old_key, seen_at in tuple(self._first_seen.items()):
@@ -580,6 +586,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         LOG.error("could not start %s backend: %s", args.backend, exc)
         return 2
     if args.pipe:
+        if args.backend in {"ruri", "onnx"}:
+            # A current Mozc process marks Space/Convert as explicit. Requests
+            # from older binaries have no marker and are treated as live input:
+            # return Mozc order immediately until the same request is stable
+            # for 500 ms, so typing never starts model inference.
+            ranker = InteractiveBurstGuard(ranker, settle_seconds=0.5)
         model = getattr(ranker, "model_path", args.model_name if args.backend != "rule" else "rule")
         status = RuntimeStatus(
             args.status_file, args.backend, str(model), normalize_windows_pipe_name(args.pipe)

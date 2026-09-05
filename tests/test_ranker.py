@@ -79,6 +79,38 @@ class RankerTests(unittest.TestCase):
         self.assertEqual(cached["request_id"], "test-3")
         self.assertEqual(delegate.calls, 1)
 
+    def test_interactive_burst_guard_runs_explicit_conversion_immediately(self):
+        class FakeRanker:
+            def __init__(self):
+                self.calls = 0
+
+            def rank(self, req):
+                self.calls += 1
+                candidates = list(reversed(req["candidates"]))
+                return {
+                    "request_id": req["request_id"],
+                    "candidates": [
+                        {"id": item["id"], "score": 10.0 - rank, "rank": rank}
+                        for rank, item in enumerate(candidates, start=1)
+                    ],
+                }
+
+        delegate = FakeRanker()
+        guard = InteractiveBurstGuard(delegate, settle_seconds=0.5)
+        req = request("庭には美しい")
+        req["inference_trigger"] = "explicit"
+        result = guard.rank(req)
+        self.assertEqual([item["id"] for item in result["candidates"]], ["c3", "c2", "c1"])
+        self.assertEqual(delegate.calls, 1)
+
+    def test_protocol_normalizes_missing_trigger_as_interactive(self):
+        req = validate_request(request("庭には美しい"))
+        self.assertEqual(req["inference_trigger"], "interactive")
+
+        explicit = request("庭には美しい")
+        explicit["inference_trigger"] = "explicit"
+        self.assertEqual(validate_request(explicit)["inference_trigger"], "explicit")
+
     def test_context_free_request_preserves_mozc_order_without_model_call(self):
         class UnexpectedRanker:
             def rank(self, _request):

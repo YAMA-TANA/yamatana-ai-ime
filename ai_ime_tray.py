@@ -70,6 +70,7 @@ def make_icon(state: str) -> Image.Image:
 def _health_request() -> dict[str, Any]:
     return {
         "request_id": f"tray-probe-{time.time_ns()}",
+        "inference_trigger": "explicit",
         "preceding_text": "接続確認のため候補を",
         "read": "えらぶ",
         "candidates": [

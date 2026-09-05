@@ -53,10 +53,9 @@ def _string(value: Any, name: str, *, max_bytes: int = MAX_TEXT_BYTES) -> str:
 def validate_request(message: Any) -> Dict[str, Any]:
     if not isinstance(message, dict):
         raise ProtocolError("request must be an object")
-    expected = {"request_id", "preceding_text", "read", "candidates"}
-    if "following_text" in message:
-        expected = expected | {"following_text"}
-    if set(message) != expected:
+    required = {"request_id", "preceding_text", "read", "candidates"}
+    allowed = required | {"following_text", "inference_trigger"}
+    if not required.issubset(message) or not set(message).issubset(allowed):
         raise ProtocolError("request has unexpected or missing fields")
 
     request_id = _string(message["request_id"], "request_id", max_bytes=128)
@@ -64,6 +63,13 @@ def validate_request(message: Any) -> Dict[str, Any]:
         raise ProtocolError("request_id must not be empty")
     preceding = _string(message["preceding_text"], "preceding_text")
     following = _string(message["following_text"], "following_text") if "following_text" in message else ""
+    inference_trigger = (
+        _string(message["inference_trigger"], "inference_trigger", max_bytes=16)
+        if "inference_trigger" in message
+        else "interactive"
+    )
+    if inference_trigger not in {"explicit", "interactive"}:
+        raise ProtocolError("inference_trigger must be explicit or interactive")
     reading = _string(message["read"], "read", max_bytes=512)
     candidates = message["candidates"]
     if not isinstance(candidates, list) or not candidates:
@@ -90,6 +96,7 @@ def validate_request(message: Any) -> Dict[str, Any]:
         "request_id": request_id,
         "preceding_text": preceding,
         "following_text": following,
+        "inference_trigger": inference_trigger,
         "read": reading,
         "candidates": normalized,
     }

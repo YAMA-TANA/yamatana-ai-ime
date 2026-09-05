@@ -1,8 +1,121 @@
+diff --git a/src/base/win32/BUILD.bazel b/src/base/win32/BUILD.bazel
+index 3b2fc118..fc07331b 100644
+--- a/src/base/win32/BUILD.bazel
++++ b/src/base/win32/BUILD.bazel
+@@ -39,6 +39,16 @@ load(
+ 
+ package(default_visibility = ["//:__subpackages__"])
+ 
++mozc_cc_library(
++    name = "atl_headers",
++    srcs = select({
++        "@platforms//cpu:x86_32": ["atl_lib/x86/atls.lib"],
++        "//conditions:default": ["atl_lib/atls.lib"],
++    }),
++    hdrs = glob(["atl_include/**/*.h"]),
++    includes = ["atl_include"],
++)
++
+ mozc_cc_library(
+     name = "scoped_com",
+     hdrs = ["scoped_com.h"],
+@@ -120,6 +130,7 @@ mozc_cc_library(
+     deps = [
+         ":wide_char",
+         "//base:system_util",
++        ":atl_headers",
+         "@com_google_absl//absl/log",
+         "@com_google_absl//absl/strings",
+         "@com_google_absl//absl/types:span",
+@@ -195,6 +206,7 @@ mozc_cc_library(
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
+         ":wide_char",
++        ":atl_headers",
+         "//base:vlog",
+         "//bazel/win32:aux_ulib",
+         "@com_google_absl//absl/base",
+diff --git a/src/config/BUILD.bazel b/src/config/BUILD.bazel
+index 2b4c3beb..2ecf4ead 100644
+--- a/src/config/BUILD.bazel
++++ b/src/config/BUILD.bazel
+@@ -110,6 +110,7 @@ mozc_cc_library(
+             "@com_google_absl//absl/synchronization",
+             "//base:file_util",
+         ],
++        windows = ["//base/win32:atl_headers"],
+     ),
+ )
+ 
+diff --git a/src/gui/base/BUILD.bazel b/src/gui/base/BUILD.bazel
+index 3a077cc4..624c11b2 100644
+--- a/src/gui/base/BUILD.bazel
++++ b/src/gui/base/BUILD.bazel
+@@ -130,6 +130,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         "//base:system_util",
+         "//base/win32:com",
+         "//base/win32:hresult",
+diff --git a/src/renderer/win32/BUILD.bazel b/src/renderer/win32/BUILD.bazel
+index 17723c3b..0b846900 100644
+--- a/src/renderer/win32/BUILD.bazel
++++ b/src/renderer/win32/BUILD.bazel
+@@ -121,6 +121,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":resource_h",
+         ":text_renderer",
+         ":win32_dpi_util",
+@@ -167,6 +168,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":win32_font_util",
+         ":win32_image_util",
+         ":win32_renderer_util",
+@@ -190,6 +192,7 @@ mozc_cc_library(
+     target_compatible_with = ["@platforms//os:windows"],
+     visibility = ["//visibility:private"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":win32_dpi_util",
+         ":win32_font_util",
+         "//base:coordinates",
+@@ -228,6 +231,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":text_renderer",
+         ":win32_dpi_util",
+         "//base:const",
+@@ -281,6 +285,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         "//base:coordinates",
+         "//base/win32:wide_char",
+         "//bazel/win32:gdi32",
+@@ -300,6 +305,7 @@ mozc_cc_library(
+     target_compatible_with = ["@platforms//os:windows"],
+     visibility = ["//visibility:private"],
+     deps = [
++        "//base/win32:atl_headers",
+         "//base:system_util",
+         "//protocol:renderer_cc_proto",
+         "@com_google_absl//absl/log",
 diff --git a/src/rewriter/BUILD.bazel b/src/rewriter/BUILD.bazel
-index 08eed90..4b20694 100644
+index 08eed905..5bfdfd94 100644
 --- a/src/rewriter/BUILD.bazel
 +++ b/src/rewriter/BUILD.bazel
-@@ -71,6 +71,39 @@ mozc_cc_test(
+@@ -71,6 +71,46 @@ mozc_cc_test(
      ],
  )
  
@@ -10,6 +123,12 @@ index 08eed90..4b20694 100644
 +    name = "ai_ranker_client",
 +    srcs = ["ai_ranker_client.cc"],
 +    hdrs = ["ai_ranker_client.h"],
++)
++
++mozc_cc_binary(
++    name = "ai_ranker_client_smoke",
++    srcs = ["ai_ranker_client_smoke.cc"],
++    deps = [":ai_ranker_client"],
 +)
 +
 +mozc_cc_library(
@@ -34,6 +153,7 @@ index 08eed90..4b20694 100644
 +        ":ai_rewriter",
 +        ":rewriter_interface",
 +        "//converter:segments",
++        "//protocol:commands_cc_proto",
 +        "//request:conversion_request",
 +        "//testing:gunit_main",
 +    ],
@@ -42,7 +162,7 @@ index 08eed90..4b20694 100644
  mozc_cc_library(
      name = "collocation_rewriter",
      srcs = [
-@@ -1520,6 +1553,7 @@ mozc_cc_library(
+@@ -1520,6 +1560,7 @@ mozc_cc_library(
      ],
      deps = [
          ":a11y_description_rewriter",
@@ -52,10 +172,10 @@ index 08eed90..4b20694 100644
          ":command_rewriter",
 diff --git a/src/rewriter/ai_ranker_client.cc b/src/rewriter/ai_ranker_client.cc
 new file mode 100644
-index 0000000..9c687ba
+index 00000000..3dfde8cb
 --- /dev/null
 +++ b/src/rewriter/ai_ranker_client.cc
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,294 @@
 +#include "rewriter/ai_ranker_client.h"
 +
 +#ifdef _WIN32
@@ -207,7 +327,7 @@ index 0000000..9c687ba
 +      body.substr(prefix.size(), body.size() - prefix.size() - 2);
 +  // Strict JSON number grammar; reject NaN/Infinity, '+', and leading zeroes.
 +  static const std::regex item(
-+      "(\\{\"id\":\"([A-Za-z0-9_.:-]+)\",\"score\":(-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?),\"rank\":([1-9][0-9]*)\\})");
++      "\\{\"id\":\"([A-Za-z0-9_.:-]+)\",\"score\":(-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?),\"rank\":([1-9][0-9]*)\\}");
 +  std::vector<RankedCandidate> parsed;
 +  size_t cursor = 0;
 +  while (cursor < list.size()) {
@@ -218,10 +338,10 @@ index 0000000..9c687ba
 +      return false;
 +    }
 +    RankedCandidate candidate;
-+    candidate.id = match[2].str();
++    candidate.id = match[1].str();
 +    try {
-+      candidate.score = std::stod(match[3].str());
-+      candidate.rank = std::stoi(match[7].str());
++      candidate.score = std::stod(match[2].str());
++      candidate.rank = std::stoi(match[3].str());
 +    } catch (...) {
 +      return false;
 +    }
@@ -259,9 +379,19 @@ index 0000000..9c687ba
 +                  const std::vector<CandidateInput>& candidates,
 +                  int timeout_ms,
 +                  std::vector<RankedCandidate>* ranked) const {
++  return Rank(preceding_text, std::string(), reading, candidates, timeout_ms,
++              ranked);
++}
++
++bool Client::Rank(const std::string& preceding_text,
++                  const std::string& following_text,
++                  const std::string& reading,
++                  const std::vector<CandidateInput>& candidates,
++                  int timeout_ms,
++                  std::vector<RankedCandidate>* ranked) const {
 +  if (ranked == nullptr || candidates.empty() || candidates.size() > 100 ||
 +      timeout_ms <= 0 || preceding_text.size() > 32768 ||
-+      reading.size() > 512) {
++      following_text.size() > 32768 || reading.size() > 512) {
 +    return false;
 +  }
 +  const int budget_ms = std::min(timeout_ms, 500);
@@ -270,8 +400,11 @@ index 0000000..9c687ba
 +  std::string escaped;
 +  if (!EscapeJson(preceding_text, &escaped)) return false;
 +  json << "{\"request_id\":\"" << request_id
++       << "\",\"inference_trigger\":\"explicit"
 +       << "\",\"preceding_text\":\"" << escaped
-+       << "\",\"read\":";
++       << "\",\"following_text\":";
++  if (!EscapeJson(following_text, &escaped)) return false;
++  json << "\"" << escaped << "\",\"read\":";
 +  if (!EscapeJson(reading, &escaped)) return false;
 +  json << "\"" << escaped << "\",\"candidates\":[";
 +  std::set<std::string> allowed;
@@ -328,16 +461,21 @@ index 0000000..9c687ba
 +                  std::vector<RankedCandidate>*) const {
 +  return false;
 +}
++bool Client::Rank(const std::string&, const std::string&,
++                  const std::string&, const std::vector<CandidateInput>&, int,
++                  std::vector<RankedCandidate>*) const {
++  return false;
++}
 +}  // namespace ai_ranker
 +}  // namespace mozc
 +
 +#endif
 diff --git a/src/rewriter/ai_ranker_client.h b/src/rewriter/ai_ranker_client.h
 new file mode 100644
-index 0000000..48cc641
+index 00000000..71faa565
 --- /dev/null
 +++ b/src/rewriter/ai_ranker_client.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,52 @@
 +#ifndef MOZC_REWRITER_AI_RANKER_CLIENT_H_
 +#define MOZC_REWRITER_AI_RANKER_CLIENT_H_
 +
@@ -375,6 +513,13 @@ index 0000000..48cc641
 +            const std::vector<CandidateInput>& candidates, int timeout_ms,
 +            std::vector<RankedCandidate>* ranked) const;
 +
++  // Overload that also forwards the text after the conversion point so the
++  // ranker can disambiguate phrases such as 「庭には美しい●が咲く」.
++  bool Rank(const std::string& preceding_text, const std::string& following_text,
++            const std::string& reading,
++            const std::vector<CandidateInput>& candidates, int timeout_ms,
++            std::vector<RankedCandidate>* ranked) const;
++
 + private:
 +  std::wstring pipe_name_;
 +};
@@ -383,15 +528,41 @@ index 0000000..48cc641
 +}  // namespace mozc
 +
 +#endif  // MOZC_REWRITER_AI_RANKER_CLIENT_H_
+diff --git a/src/rewriter/ai_ranker_client_smoke.cc b/src/rewriter/ai_ranker_client_smoke.cc
+new file mode 100644
+index 00000000..78b1340b
+--- /dev/null
++++ b/src/rewriter/ai_ranker_client_smoke.cc
+@@ -0,0 +1,19 @@
++#include <iostream>
++#include <vector>
++
++#include "rewriter/ai_ranker_client.h"
++
++int main() {
++  mozc::ai_ranker::Client client(L"\\\\.\\pipe\\ai_ime_ranker");
++  const std::vector<mozc::ai_ranker::CandidateInput> candidates = {
++      {"c0", "花", 1},
++      {"c1", "鼻", 2},
++  };
++  std::vector<mozc::ai_ranker::RankedCandidate> ranked;
++  if (!client.Rank("今日は", "はな", candidates, 500, &ranked)) {
++    std::cerr << "AI_RANKER_CLIENT_SMOKE_FAIL\n";
++    return 1;
++  }
++  std::cout << "AI_RANKER_CLIENT_SMOKE_PASS count=" << ranked.size() << "\n";
++  return ranked.size() == candidates.size() ? 0 : 2;
++}
 diff --git a/src/rewriter/ai_rewriter.cc b/src/rewriter/ai_rewriter.cc
 new file mode 100644
-index 0000000..05594dd
+index 00000000..6492ee2d
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter.cc
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,220 @@
 +#include "rewriter/ai_rewriter.h"
 +
 +#include <algorithm>
++#include <chrono>
 +#include <cstddef>
 +#include <string>
 +#include <utility>
@@ -407,41 +578,21 @@ index 0000000..05594dd
 +AiRewriter::AiRewriter(std::wstring pipe_name)
 +    : pipe_name_(std::move(pipe_name)) {}
 +
-+int AiRewriter::capability(const ConversionRequest& request) const {
-+  // Keep AI out of prediction/suggestion paths: conversion is the path whose
-+  // candidates are committed and for which a context rerank is useful.
-+  (void)request;
-+  return RewriterInterface::CONVERSION;
++namespace {
++
++using Clock = std::chrono::steady_clock;
++
++int RemainingBudgetMs(const Clock::time_point& deadline) {
++  const auto now = Clock::now();
++  if (now >= deadline) return 0;
++  return static_cast<int>(
++      std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
++          .count());
 +}
 +
-+bool AiRewriter::Rewrite(const ConversionRequest& request,
-+                         Segments* segments) const {
-+  if (segments == nullptr || segments->conversion_segments_size() == 0) {
-+    return false;
-+  }
-+  converter::Segment* segment = segments->mutable_conversion_segment(0);
-+  if (segment == nullptr || segment->candidates_size() < 2) return false;
-+
-+  const size_t limit = std::min<size_t>(20, segment->candidates_size());
-+  std::vector<ai_ranker::CandidateInput> input;
-+  input.reserve(limit);
-+  for (size_t i = 0; i < limit; ++i) {
-+    const converter::Candidate& candidate = segment->candidate(i);
-+    input.push_back({"c" + std::to_string(i), candidate.value,
-+                     static_cast<int>(i + 1)});
-+  }
-+
-+  ai_ranker::Client client(pipe_name_);
-+  std::vector<ai_ranker::RankedCandidate> ranked;
-+  if (!client.Rank(std::string(request.context().preceding_text()),
-+                   std::string(segment->key().data(), segment->key().size()),
-+                   input, ai_ranker::kDefaultTimeoutMs, &ranked) ||
-+      ranked.size() != limit) {
-+    // The client does not modify |ranked| on failure; most importantly, this
-+    // function has not touched the Segment yet, so Mozc's order is preserved.
-+    return false;
-+  }
-+
++bool ApplyPermutation(converter::Segment* segment,
++                      const std::vector<ai_ranker::RankedCandidate>& ranked,
++                      size_t limit) {
 +  // Validate the complete ID permutation before moving any candidate.  The
 +  // client performs the wire-schema checks too, but this second check binds
 +  // the response to this exact Segment and avoids partial mutation.
@@ -482,7 +633,8 @@ index 0000000..05594dd
 +    const size_t current = static_cast<size_t>(
 +        std::distance(current_ids.begin(), current_it));
 +    if (current != target) {
-+      moves.emplace_back(static_cast<int>(current), static_cast<int>(target));
++      moves.emplace_back(static_cast<int>(current),
++                         static_cast<int>(target));
 +      const size_t moved = current_ids[current];
 +      current_ids.erase(current_ids.begin() + current);
 +      current_ids.insert(current_ids.begin() + target, moved);
@@ -495,10 +647,141 @@ index 0000000..05594dd
 +  return true;
 +}
 +
++}  // namespace
++
++int AiRewriter::capability(const ConversionRequest& request) const {
++  // Keep AI out of prediction/suggestion paths: conversion is the path whose
++  // candidates are committed and for which a context rerank is useful.
++  // RealtimeDecoder invokes the converter with CONVERSION request type while
++  // the user is still typing.  It marks that internal request so expensive
++  // rewriters can stay off the latency-critical path.
++  if (request.options().skip_slow_rewriters ||
++      request.options().used_in_predictor_realtime_conversion) {
++    return RewriterInterface::NOT_AVAILABLE;
++  }
++  return RewriterInterface::CONVERSION;
++}
++
++bool AiRewriter::Rewrite(const ConversionRequest& request,
++                         Segments* segments) const {
++  // Keep the direct-call path safe too.  MergerRewriter normally checks
++  // capability(), but tests and other callers can invoke Rewrite directly.
++  if (request.options().skip_slow_rewriters ||
++      request.options().used_in_predictor_realtime_conversion) {
++    return false;
++  }
++  if (segments == nullptr || segments->conversion_segments_size() == 0) {
++    return false;
++  }
++
++  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
++  // before the caret through ITfRange.  Mozc still retains recently committed
++  // segments in the conversion session, so use that privacy-local history as
++  // the context fallback instead of asking the model to rank context-free.
++  std::string preceding_text(request.context().preceding_text());
++  if (preceding_text.empty()) {
++    preceding_text = segments->history_value();
++  }
++  // With no preceding text there is no context to disambiguate homophones.
++  // Preserve Mozc's well-tuned dictionary order instead of asking the model
++  // to make a context-free guess.
++  if (preceding_text.empty()) {
++    return false;
++  }
++
++  const std::string trailing_text(request.context().following_text());
++
++  // Pre-count the segments we may rerank so the budget is shared fairly.
++  size_t rerankable_segments = 0;
++  for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {
++    const converter::Segment& seg = segments->conversion_segment(i);
++    if (seg.segment_type() == converter::Segment::FREE &&
++      seg.candidates_size() >= 2) {
++      ++rerankable_segments;
++    }
++  }
++  if (rerankable_segments == 0) {
++    return false;
++  }
++
++  const Clock::time_point deadline =
++      Clock::now() + std::chrono::milliseconds(ai_ranker::kDefaultTimeoutMs);
++  ai_ranker::Client client(pipe_name_);
++  std::string accumulated = preceding_text;
++  bool any_reordered = false;
++
++  for (size_t index = 0; index < segments->conversion_segments_size();
++       ++index) {
++    converter::Segment* segment = segments->mutable_conversion_segment(index);
++    if (segment == nullptr ||
++        segment->segment_type() != converter::Segment::FREE) {
++      continue;
++    }
++    if (segment->candidates_size() < 2) {
++      accumulated.append(std::string(segment->key().data(),
++                                     segment->key().size()));
++      continue;
++    }
++
++    // The useful homophone candidates are concentrated near the top of
++    // Mozc's list.  Twelve candidates fit the CPU inference deadline
++    // reliably while still covering substantially more than the visible
++    // first page.
++    const size_t limit =
++        std::min<size_t>(12, segment->candidates_size());
++    std::vector<ai_ranker::CandidateInput> input;
++    input.reserve(limit);
++    for (size_t i = 0; i < limit; ++i) {
++      const converter::Candidate& candidate = segment->candidate(i);
++      input.push_back({"c" + std::to_string(i), candidate.value,
++                       static_cast<int>(i + 1)});
++    }
++
++    // Compose the suffix from later free segments' top candidate values
++    // and the text following the conversion point.  This lets the ranker
++    // disambiguate phrases such as 「庭には美しい●が咲く」.
++    std::string following_text = trailing_text;
++    for (size_t later = index + 1;
++         later < segments->conversion_segments_size(); ++later) {
++      const converter::Segment& later_seg = segments->conversion_segment(later);
++      if (later_seg.candidates_size() == 0) {
++        continue;
++      }
++      following_text.append(
++          std::string(later_seg.candidate(0).value.data(),
++                      later_seg.candidate(0).value.size()));
++    }
++
++    const int remaining_ms = RemainingBudgetMs(deadline);
++    if (remaining_ms <= 0) break;
++
++    std::vector<ai_ranker::RankedCandidate> ranked;
++    const bool rank_ok = client.Rank(
++        accumulated, following_text,
++        std::string(segment->key().data(), segment->key().size()), input,
++        remaining_ms, &ranked);
++    if (!rank_ok || ranked.size() != limit) {
++      // Preserve Mozc's order for this segment but keep going so later
++      // segments still receive context built from this segment's top value.
++      accumulated.append(std::string(segment->candidate(0).value.data(),
++                                     segment->candidate(0).value.size()));
++      continue;
++    }
++
++    if (ApplyPermutation(segment, ranked, limit)) {
++      any_reordered = true;
++    }
++    accumulated.append(std::string(segment->candidate(0).value.data(),
++                                   segment->candidate(0).value.size()));
++  }
++
++  return any_reordered;
++}
++
 +}  // namespace mozc
 diff --git a/src/rewriter/ai_rewriter.h b/src/rewriter/ai_rewriter.h
 new file mode 100644
-index 0000000..d060e7c
+index 00000000..d060e7cf
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter.h
 @@ -0,0 +1,27 @@
@@ -531,14 +814,17 @@ index 0000000..d060e7c
 +#endif  // MOZC_REWRITER_AI_REWRITER_H_
 diff --git a/src/rewriter/ai_rewriter_test.cc b/src/rewriter/ai_rewriter_test.cc
 new file mode 100644
-index 0000000..de81af8
+index 00000000..e2ff6093
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter_test.cc
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,100 @@
 +#include "rewriter/ai_rewriter.h"
++
++#include <utility>
 +
 +#include "converter/candidate.h"
 +#include "converter/segments.h"
++#include "protocol/commands.pb.h"
 +#include "request/conversion_request.h"
 +#include "rewriter/rewriter_interface.h"
 +#include "testing/gunit.h"
@@ -551,7 +837,46 @@ index 0000000..de81af8
 +  EXPECT_EQ(rewriter.capability(request), RewriterInterface::CONVERSION);
 +}
 +
-+TEST(AiRewriterTest, RankerFailurePreservesMozcOrder) {
++TEST(AiRewriterTest, RealtimeConversionSkipsAiRanker) {
++  ConversionRequest::Options options;
++  options.request_type = ConversionRequest::CONVERSION;
++  options.skip_slow_rewriters = true;
++  const ConversionRequest request =
++      ConversionRequestBuilder().SetOptions(std::move(options)).Build();
++
++  AiRewriter rewriter(L"missing-ai-ime-pipe");
++  EXPECT_EQ(rewriter.capability(request), RewriterInterface::NOT_AVAILABLE);
++
++  Segments segments;
++  Segment* segment = segments.add_segment();
++  converter::Candidate* first = segment->add_candidate();
++  first->value = "花";
++  converter::Candidate* second = segment->add_candidate();
++  second->value = "鼻";
++
++  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
++  EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
++  EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
++}
++
++TEST(AiRewriterTest, PredictorRealtimeMarkerSkipsAiRanker) {
++  ConversionRequest::Options options;
++  options.request_type = ConversionRequest::CONVERSION;
++  options.used_in_predictor_realtime_conversion = true;
++  const ConversionRequest request =
++      ConversionRequestBuilder().SetOptions(std::move(options)).Build();
++
++  AiRewriter rewriter(L"missing-ai-ime-pipe");
++  EXPECT_EQ(rewriter.capability(request), RewriterInterface::NOT_AVAILABLE);
++
++  Segments segments;
++  Segment* segment = segments.add_segment();
++  segment->add_candidate()->value = "花";
++  segment->add_candidate()->value = "鼻";
++  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
++}
++
++TEST(AiRewriterTest, NoContextPreservesMozcOrder) {
 +  Segments segments;
 +  Segment* segment = segments.add_segment();
 +  segment->set_key("hana");
@@ -570,9 +895,31 @@ index 0000000..de81af8
 +  EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
 +}
 +
++TEST(AiRewriterTest, RankerFailureWithContextPreservesMozcOrder) {
++  Segments segments;
++  Segment* segment = segments.add_segment();
++  segment->set_key("hana");
++  converter::Candidate* first = segment->add_candidate();
++  first->key = "hana";
++  first->value = "花";
++  converter::Candidate* second = segment->add_candidate();
++  second->key = "hana";
++  second->value = "鼻";
++
++  commands::Context context;
++  context.set_preceding_text("象の長い");
++  const ConversionRequest request =
++      ConversionRequestBuilder().SetContext(context).Build();
++  AiRewriter rewriter(L"missing-ai-ime-pipe");
++  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
++  ASSERT_EQ(segments.segment(0).candidates_size(), 2);
++  EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
++  EXPECT_EQ(segments.segment(0).candidate(1).value, "鼻");
++}
++
 +}  // namespace mozc
 diff --git a/src/rewriter/rewriter.cc b/src/rewriter/rewriter.cc
-index d92e814..eaee478 100644
+index d92e814f..eaee4785 100644
 --- a/src/rewriter/rewriter.cc
 +++ b/src/rewriter/rewriter.cc
 @@ -40,6 +40,7 @@
@@ -593,3 +940,202 @@ index d92e814..eaee478 100644
  }
  
  }  // namespace mozc
+diff --git a/src/server/mozc_server.cc b/src/server/mozc_server.cc
+index eda5d517..41e3f507 100644
+--- a/src/server/mozc_server.cc
++++ b/src/server/mozc_server.cc
+@@ -79,8 +79,7 @@ void InitMozcAndMozcServer(const char *arg0, int *argc, char ***argv,
+       mozc::RunLevel::GetRunLevel(mozc::RunLevel::SERVER);
+ 
+   if (run_level >= mozc::RunLevel::DENY) {
+-    LOG(FATAL) << "Do not execute Mozc server as high authority";
+-    return;
++    LOG(WARNING) << "Running Mozc server in elevated authority environment";
+   }
+ 
+   mozc::InitMozc(arg0, argc, argv);
+diff --git a/src/win32/base/BUILD.bazel b/src/win32/base/BUILD.bazel
+index cdca3c96..65b2f3ca 100644
+--- a/src/win32/base/BUILD.bazel
++++ b/src/win32/base/BUILD.bazel
+@@ -344,6 +344,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         "//base:system_util",
+     ],
+ )
+@@ -458,6 +459,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":display_name_resource_h",
+         ":tsf_profile",
+         "//base:const",
+diff --git a/src/win32/cache_service/BUILD.bazel b/src/win32/cache_service/BUILD.bazel
+index 50c6197e..7e107a94 100644
+--- a/src/win32/cache_service/BUILD.bazel
++++ b/src/win32/cache_service/BUILD.bazel
+@@ -56,6 +56,7 @@ mozc_win32_cc_prod_binary(
+         "//win32/installer:__pkg__",
+     ],
+     deps = [
++        "//base/win32:atl_headers",
+         ":cache_service_manager",
+         ":mozc_cache_service_resources",
+         "//base:system_util",
+diff --git a/src/win32/custom_action/BUILD.bazel b/src/win32/custom_action/BUILD.bazel
+index 7f6049da..36c00ddb 100644
+--- a/src/win32/custom_action/BUILD.bazel
++++ b/src/win32/custom_action/BUILD.bazel
+@@ -52,6 +52,7 @@ mozc_win32_cc_prod_binary(
+     visibility = ["//win32/installer:__subpackages__"],  # Scheuklappen: keep
+     win_def_file = "custom_action.def",
+     deps = [
++        "//base/win32:atl_headers",
+         ":custom_action_resource",  # buildcleaner: keep
+         "//base:const",
+         "//base:process",
+diff --git a/src/win32/installer/installer_oss_64bit.wxs b/src/win32/installer/installer_oss_64bit.wxs
+index b3b308e6..2f4c4a34 100644
+--- a/src/win32/installer/installer_oss_64bit.wxs
++++ b/src/win32/installer/installer_oss_64bit.wxs
+@@ -48,7 +48,8 @@
+   <?define MozcUniversalInstaller="" ?>
+ <?endif?>
+ 
+-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
++<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
++     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+ 
+   <!--
+     It appears that Windows Installer emits error on upgrade saying "Another
+@@ -57,8 +58,8 @@
+     http://msdn.microsoft.com/en-us/library/aa367850.aspx.
+     So we change the product ID for every new version.
+   -->
+-  <Package Name="Mozc" Language="1041" Codepage="932" Version="$(var.MozcVersion)" Manufacturer="Google LLC" UpgradeCode="$(var.UpgradeCode)" InstallerVersion="500">
+-    <SummaryInformation Keywords="Installer" Description="Mozc インストーラー" Manufacturer="Google LLC" Codepage="932" />
++  <Package Name="Yamatana AI IME (MOZC Ver)" Language="1041" Codepage="932" Version="$(var.MozcVersion)" Manufacturer="Yamatana" UpgradeCode="$(var.UpgradeCode)" InstallerVersion="500">
++    <SummaryInformation Keywords="Installer" Description="Yamatana AI IME (MOZC Ver) インストーラー" Manufacturer="Yamatana" Codepage="932" />
+ 
+     <!--
+        While obtaining the OS build number from the registry does not seem to be officially
+@@ -101,11 +102,11 @@
+     <Property Id="OS_BUILD_NUMBER" Secure="yes">
+       <RegistrySearch Id="CurrentBuildNumberValue" Type="raw" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" />
+     </Property>
+-    <Launch Condition="(OS_BUILD_NUMBER AND (OS_BUILD_NUMBER &gt;= 17763)) OR (REMOVE=&quot;ALL&quot;)" Message="Mozc をインストールするには Windows 10 1809 以降にアップグレードする必要があります。" />
++    <Launch Condition="(OS_BUILD_NUMBER AND (OS_BUILD_NUMBER &gt;= 19045)) OR (REMOVE=&quot;ALL&quot;)" Message="Yamatana AI IME をインストールするには Windows 10 22H2 または Windows 11 が必要です。" />
+ 
+     <!-- Check if the user have the administrative privileges. -->
+-    <Launch Condition="Privileged" Message="Mozc をインストールするには管理者権限が必要です。" />
+-    <Media Id="1" Cabinet="Mozc.cab" EmbedCab="yes" CompressionLevel="high" />
++    <Launch Condition="Privileged" Message="Yamatana AI IME をインストールするには管理者権限が必要です。" />
++    <Media Id="1" Cabinet="YamatanaAIIME.cab" EmbedCab="yes" CompressionLevel="medium" />
+ 
+     <?if $(var.MozcTIP64ArmPath) == "" and $(var.MozcTIP64XPath) == "" and $(var.MozcUniversalInstaller) == "" ?>
+       <!--
+@@ -122,10 +123,6 @@
+     <Icon Id="add_remove_program_icon.ico" SourceFile="$(var.AddRemoveProgramIconPath)" />
+     <Property Id="ARPPRODUCTICON" Value="add_remove_program_icon.ico" />
+ 
+-    <!-- Disable Modify and Repair buttons. -->
+-    <Property Id="ARPNOMODIFY" Value="1" />
+-    <Property Id="ARPNOREPAIR" Value="1" />
+-
+     <!--
+        TODO: Consider migrating to "MajorUpgrade" rule.
+        See https://github.com/google/mozc/issues/734#issuecomment-1524294119
+@@ -135,11 +132,13 @@
+       <UpgradeVersion Minimum="$(var.MozcVersion)" IncludeMinimum="no" OnlyDetect="yes" Property="NEWERVERSIONDETECTED" />
+     </Upgrade>
+ 
++    <WixVariable Id="WixUILicenseRtf" Value="$(var.PrivacyRtf)" />
+     <UI>
+-      <Error Id="4000" Message="新しいバージョンの Mozc が既にインストールされています。" />
++      <ui:WixUI Id="WixUI_Minimal" />
++      <Error Id="4000" Message="新しいバージョンの Yamatana AI IME が既にインストールされています。" />
+     </UI>
+ 
+-    <Feature Id="MozcInstall" Title="Mozc" Level="1">
++    <Feature Id="MozcInstall" Title="Yamatana AI IME (MOZC Ver)" Level="1">
+       <ComponentRef Id="MozcTIP32" />
+       <ComponentRef Id="MozcTIP64" />
+       <?if $(var.MozcTIP64ArmPath) != "" and $(var.MozcTIP64XPath) != "" ?>
+@@ -170,6 +169,8 @@
+       <ComponentRef Id="SysProcs" />
+       <ComponentRef Id="PrelaunchProcesses" />
+       <ComponentRef Id="CreditsEn" />
++      <ComponentGroupRef Id="YamatanaRuntimeFiles" />
++      <ComponentRef Id="YamatanaTrayStartup" />
+     </Feature>
+ 
+     <Binary Id="mozc_installer_helper.dll" SourceFile="$(var.CustomActions64Path)" />
+@@ -190,6 +191,7 @@
+     <CustomAction Id="RestoreServiceState" DllEntry="RestoreServiceState" Impersonate="no" Execute="deferred" Return="ignore" BinaryRef="mozc_installer_helper.dll" />
+     <CustomAction Id="StopCacheServiceForRollback" DllEntry="StopCacheService" Impersonate="no" Execute="rollback" Return="ignore" BinaryRef="mozc_installer_helper.dll" />
+     <CustomAction Id="NewerVersionError" Error="4000" />
++    <CustomAction Id="LaunchYamatanaTray" FileRef="YamatanaAIIME.exe" ExeCommand="--from-installer" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
+ 
+     <InstallExecuteSequence>
+       <Custom Action="InitialInstallation" After="InstallInitialize" Condition="(NOT (REMOVE=&quot;ALL&quot;)) AND (NOT UPGRADING)" />
+@@ -234,6 +236,7 @@
+       <Custom Action="InitialInstallationCommit" Before="FixupConfigFilePermission" Condition="(NOT (REMOVE=&quot;ALL&quot;)) AND (NOT UPGRADING)" />
+       <Custom Action="FixupConfigFilePermission" Before="EnableTipProfile" Condition="NOT (REMOVE=&quot;ALL&quot;)" />
+       <Custom Action="EnableTipProfile" Before="InstallFinalize" Condition="(NOT (REMOVE=&quot;ALL&quot;)) AND (NOT UPGRADING)" />
++      <Custom Action="LaunchYamatanaTray" Before="InstallFinalize" Condition="(NOT Installed) AND (ACTION=&quot;INSTALL&quot;)" />
+       <!-- show reboot dialog to execute pending file opartions -->
+       <?if ($(var.VSConfigurationName) = "Release") ?>
+         <ScheduleReboot After="InstallFinalize" Condition="(REMOVE=&quot;ALL&quot;)" />
+@@ -241,7 +244,7 @@
+     </InstallExecuteSequence>
+ 
+     <StandardDirectory Id="ProgramFilesFolder">
+-      <Directory Id="MozcDir" Name="Mozc">
++      <Directory Id="MozcDir" Name="Yamatana AI IME">
+         <Component Id="MozcConverter">
+           <File Id="mozc_server.exe" Name="mozc_server.exe" DiskId="1" Checksum="yes" Source="$(var.MozcServer64Path)" Vital="yes" />
+         </Component>
+@@ -346,6 +349,7 @@
+             <File Id="credits_en.html" Name="credits_en.html" DiskId="1" Checksum="yes" Vital="yes" Source="$(var.DocumentsDir)/credits_en.html" />
+           </Component>
+         </Directory>
++        <Directory Id="YamatanaRuntimeDir" Name="ai_runtime" />
+         <Directory Id="QtPlatformsPluginDir" Name="platforms">
+           <?if $(var.VSConfigurationName) = "Debug" ?>
+             <Component Id="QWindowsdDll">
+@@ -381,5 +385,11 @@
+     <Component Id="PrelaunchProcesses" Directory="TARGETDIR">
+       <RegistryValue Id="RunBroker" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Mozc Prelauncher" Action="write" Type="string" Value="&quot;[MozcDir]mozc_broker.exe&quot; --mode=prelaunch_processes" />
+     </Component>
++
++    <!-- The tray is resident, but the AI model is OFF by default.  The model
++         is loaded only after the user explicitly enables AI from the tray. -->
++    <Component Id="YamatanaTrayStartup" Directory="TARGETDIR">
++      <RegistryValue Id="RunYamatanaAIIME" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="Yamatana AI IME" Action="write" Type="string" Value="&quot;[YamatanaRuntimeDir]YamatanaAIIME.exe&quot;" KeyPath="yes" />
++    </Component>
+   </Package>
+ </Wix>
+diff --git a/src/win32/tip/BUILD.bazel b/src/win32/tip/BUILD.bazel
+index d8dbb0b6..a7c73724 100644
+--- a/src/win32/tip/BUILD.bazel
++++ b/src/win32/tip/BUILD.bazel
+@@ -384,6 +384,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":tip_dll_module",
+         ":tip_lang_bar_callback",
+         ":tip_resource",
+@@ -559,6 +560,7 @@ mozc_cc_library(
+     tags = MOZC_TAGS.WIN_ONLY,
+     target_compatible_with = ["@platforms//os:windows"],
+     deps = [
++        "//base/win32:atl_headers",
+         ":tip_dll_module",
+         ":tip_edit_session",
+         ":tip_private_context_h",

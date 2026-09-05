@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       release_label:
-        description: File/release label, for example 0.1.1-beta
+        description: File/release label, for example 0.1.2-beta
         required: true
-        default: 0.1.1-beta
+        default: 0.1.2-beta
       product_version:
         description: Numeric MSI ProductVersion
         required: true
-        default: 1.0.4.0
+        default: 1.0.5.0
       publish_release:
         description: Attach artifacts to a GitHub prerelease with tag v<release_label>
         type: boolean
