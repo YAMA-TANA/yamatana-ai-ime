@@ -35,6 +35,13 @@ class Client {
             const std::vector<CandidateInput>& candidates, int timeout_ms,
             std::vector<RankedCandidate>* ranked) const;
 
+  // Overload that also forwards the text after the conversion point so the
+  // ranker can disambiguate phrases such as 「庭には美しい●が咲く」.
+  bool Rank(const std::string& preceding_text, const std::string& following_text,
+            const std::string& reading,
+            const std::vector<CandidateInput>& candidates, int timeout_ms,
+            std::vector<RankedCandidate>* ranked) const;
+
  private:
   std::wstring pipe_name_;
 };

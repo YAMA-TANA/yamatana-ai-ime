@@ -290,6 +290,36 @@ class RankerTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             validate_response(bad, req)
 
+    def test_acceptance_following_text_picks_flower(self):
+        req = {
+            "request_id": "test-ft",
+            "preceding_text": "庭には美しい",
+            "following_text": "が咲く",
+            "read": "はな",
+            "candidates": [
+                {"id": "c1", "text": "はな", "rank": 1},
+                {"id": "c2", "text": "花", "rank": 2},
+                {"id": "c3", "text": "鼻", "rank": 3},
+            ],
+        }
+        result = RuleBasedRanker().rank(req)
+        self.assertEqual(result["candidates"][0]["id"], "c2")
+
+    def test_acceptance_following_text_picks_nose(self):
+        req = {
+            "request_id": "test-ft",
+            "preceding_text": "彼は",
+            "following_text": "が大きい",
+            "read": "はな",
+            "candidates": [
+                {"id": "c1", "text": "はな", "rank": 1},
+                {"id": "c2", "text": "花", "rank": 2},
+                {"id": "c3", "text": "鼻", "rank": 3},
+            ],
+        }
+        result = RuleBasedRanker().rank(req)
+        self.assertEqual(result["candidates"][0]["id"], "c3")
+
     def test_protocol_rejects_duplicate_fields_and_non_contiguous_input_rank(self):
         with self.assertRaises(ProtocolError):
             loads_strict('{"request_id":"x","request_id":"y"}')

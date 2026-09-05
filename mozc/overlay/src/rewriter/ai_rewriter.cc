@@ -1,6 +1,7 @@
 #include "rewriter/ai_rewriter.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -16,68 +17,21 @@ namespace mozc {
 AiRewriter::AiRewriter(std::wstring pipe_name)
     : pipe_name_(std::move(pipe_name)) {}
 
-int AiRewriter::capability(const ConversionRequest& request) const {
-  // Keep AI out of prediction/suggestion paths: conversion is the path whose
-  // candidates are committed and for which a context rerank is useful.
-  // RealtimeDecoder invokes the converter with CONVERSION request type while
-  // the user is still typing.  It marks that internal request so expensive
-  // rewriters can stay off the latency-critical path.
-  if (request.options().skip_slow_rewriters) {
-    return RewriterInterface::NOT_AVAILABLE;
-  }
-  return RewriterInterface::CONVERSION;
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+int RemainingBudgetMs(const Clock::time_point& deadline) {
+  const auto now = Clock::now();
+  if (now >= deadline) return 0;
+  return static_cast<int>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
+          .count());
 }
 
-bool AiRewriter::Rewrite(const ConversionRequest& request,
-                         Segments* segments) const {
-  // Keep the direct-call path safe too.  MergerRewriter normally checks
-  // capability(), but tests and other callers can invoke Rewrite directly.
-  if (request.options().skip_slow_rewriters) {
-    return false;
-  }
-  if (segments == nullptr || segments->conversion_segments_size() == 0) {
-    return false;
-  }
-  converter::Segment* segment = segments->mutable_conversion_segment(0);
-  if (segment == nullptr || segment->candidates_size() < 2) return false;
-
-  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
-  // before the caret through ITfRange.  Mozc still retains recently committed
-  // segments in the conversion session, so use that privacy-local history as
-  // the context fallback instead of asking the model to rank context-free.
-  std::string preceding_text(request.context().preceding_text());
-  if (preceding_text.empty()) {
-    preceding_text = segments->history_value();
-  }
-  // With no preceding text there is no context to disambiguate homophones.
-  // Preserve Mozc's well-tuned dictionary order instead of asking the model
-  // to make a context-free guess.
-  if (preceding_text.empty()) {
-    return false;
-  }
-
-  const size_t limit = std::min<size_t>(20, segment->candidates_size());
-  std::vector<ai_ranker::CandidateInput> input;
-  input.reserve(limit);
-  for (size_t i = 0; i < limit; ++i) {
-    const converter::Candidate& candidate = segment->candidate(i);
-    input.push_back({"c" + std::to_string(i), candidate.value,
-                     static_cast<int>(i + 1)});
-  }
-
-  ai_ranker::Client client(pipe_name_);
-  std::vector<ai_ranker::RankedCandidate> ranked;
-  const bool rank_ok = client.Rank(
-      preceding_text,
-      std::string(segment->key().data(), segment->key().size()), input,
-      ai_ranker::kDefaultTimeoutMs, &ranked);
-  if (!rank_ok ||
-      ranked.size() != limit) {
-    // The client does not modify |ranked| on failure; most importantly, this
-    // function has not touched the Segment yet, so Mozc's order is preserved.
-    return false;
-  }
-
+bool ApplyPermutation(converter::Segment* segment,
+                      const std::vector<ai_ranker::RankedCandidate>& ranked,
+                      size_t limit) {
   // Validate the complete ID permutation before moving any candidate.  The
   // client performs the wire-schema checks too, but this second check binds
   // the response to this exact Segment and avoids partial mutation.
@@ -118,7 +72,8 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
     const size_t current = static_cast<size_t>(
         std::distance(current_ids.begin(), current_it));
     if (current != target) {
-      moves.emplace_back(static_cast<int>(current), static_cast<int>(target));
+      moves.emplace_back(static_cast<int>(current),
+                         static_cast<int>(target));
       const size_t moved = current_ids[current];
       current_ids.erase(current_ids.begin() + current);
       current_ids.insert(current_ids.begin() + target, moved);
@@ -129,6 +84,135 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   }
   segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;
   return true;
+}
+
+}  // namespace
+
+int AiRewriter::capability(const ConversionRequest& request) const {
+  // Keep AI out of prediction/suggestion paths: conversion is the path whose
+  // candidates are committed and for which a context rerank is useful.
+  // RealtimeDecoder invokes the converter with CONVERSION request type while
+  // the user is still typing.  It marks that internal request so expensive
+  // rewriters can stay off the latency-critical path.
+  if (request.options().skip_slow_rewriters) {
+    return RewriterInterface::NOT_AVAILABLE;
+  }
+  return RewriterInterface::CONVERSION;
+}
+
+bool AiRewriter::Rewrite(const ConversionRequest& request,
+                         Segments* segments) const {
+  // Keep the direct-call path safe too.  MergerRewriter normally checks
+  // capability(), but tests and other callers can invoke Rewrite directly.
+  if (request.options().skip_slow_rewriters) {
+    return false;
+  }
+  if (segments == nullptr || segments->conversion_segments_size() == 0) {
+    return false;
+  }
+
+  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
+  // before the caret through ITfRange.  Mozc still retains recently committed
+  // segments in the conversion session, so use that privacy-local history as
+  // the context fallback instead of asking the model to rank context-free.
+  std::string preceding_text(request.context().preceding_text());
+  if (preceding_text.empty()) {
+    preceding_text = segments->history_value();
+  }
+  // With no preceding text there is no context to disambiguate homophones.
+  // Preserve Mozc's well-tuned dictionary order instead of asking the model
+  // to make a context-free guess.
+  if (preceding_text.empty()) {
+    return false;
+  }
+
+  const std::string trailing_text(request.context().following_text());
+
+  // Pre-count the segments we may rerank so the budget is shared fairly.
+  size_t rerankable_segments = 0;
+  for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {
+    const converter::Segment* seg = segments->conversion_segment(i);
+    if (seg != nullptr && seg->segment_type() == converter::Segment::FREE &&
+        seg->candidates_size() >= 2) {
+      ++rerankable_segments;
+    }
+  }
+  if (rerankable_segments == 0) {
+    return false;
+  }
+
+  const Clock::time_point deadline =
+      Clock::now() + std::chrono::milliseconds(ai_ranker::kDefaultTimeoutMs);
+  ai_ranker::Client client(pipe_name_);
+  std::string accumulated = preceding_text;
+  bool any_reordered = false;
+
+  for (size_t index = 0; index < segments->conversion_segments_size();
+       ++index) {
+    converter::Segment* segment = segments->mutable_conversion_segment(index);
+    if (segment == nullptr ||
+        segment->segment_type() != converter::Segment::FREE) {
+      continue;
+    }
+    if (segment->candidates_size() < 2) {
+      accumulated.append(std::string(segment->key().data(),
+                                     segment->key().size()));
+      continue;
+    }
+
+    // The useful homophone candidates are concentrated near the top of
+    // Mozc's list.  Twelve candidates fit the CPU inference deadline
+    // reliably while still covering substantially more than the visible
+    // first page.
+    const size_t limit =
+        std::min<size_t>(12, segment->candidates_size());
+    std::vector<ai_ranker::CandidateInput> input;
+    input.reserve(limit);
+    for (size_t i = 0; i < limit; ++i) {
+      const converter::Candidate& candidate = segment->candidate(i);
+      input.push_back({"c" + std::to_string(i), candidate.value,
+                       static_cast<int>(i + 1)});
+    }
+
+    // Compose the suffix from later free segments' top candidate values
+    // and the text following the conversion point.  This lets the ranker
+    // disambiguate phrases such as 「庭には美しい●が咲く」.
+    std::string following_text = trailing_text;
+    for (size_t later = index + 1;
+         later < segments->conversion_segments_size(); ++later) {
+      const converter::Segment* later_seg = segments->conversion_segment(later);
+      if (later_seg == nullptr || later_seg->candidates_size() == 0) {
+        continue;
+      }
+      following_text.append(
+          std::string(later_seg->candidate(0).value.data(),
+                      later_seg->candidate(0).value.size()));
+    }
+
+    const int remaining_ms = RemainingBudgetMs(deadline);
+    if (remaining_ms <= 0) break;
+
+    std::vector<ai_ranker::RankedCandidate> ranked;
+    const bool rank_ok = client.Rank(
+        accumulated, following_text,
+        std::string(segment->key().data(), segment->key().size()), input,
+        remaining_ms, &ranked);
+    if (!rank_ok || ranked.size() != limit) {
+      // Preserve Mozc's order for this segment but keep going so later
+      // segments still receive context built from this segment's top value.
+      accumulated.append(std::string(segment->candidate(0).value.data(),
+                                     segment->candidate(0).value.size()));
+      continue;
+    }
+
+    if (ApplyPermutation(segment, ranked, limit)) {
+      any_reordered = true;
+    }
+    accumulated.append(std::string(segment->candidate(0).value.data(),
+                                   segment->candidate(0).value.size()));
+  }
+
+  return any_reordered;
 }
 
 }  // namespace mozc

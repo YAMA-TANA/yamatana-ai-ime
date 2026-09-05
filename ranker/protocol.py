@@ -53,13 +53,17 @@ def _string(value: Any, name: str, *, max_bytes: int = MAX_TEXT_BYTES) -> str:
 def validate_request(message: Any) -> Dict[str, Any]:
     if not isinstance(message, dict):
         raise ProtocolError("request must be an object")
-    if set(message) != {"request_id", "preceding_text", "read", "candidates"}:
+    expected = {"request_id", "preceding_text", "read", "candidates"}
+    if "following_text" in message:
+        expected = expected | {"following_text"}
+    if set(message) != expected:
         raise ProtocolError("request has unexpected or missing fields")
 
     request_id = _string(message["request_id"], "request_id", max_bytes=128)
     if not request_id:
         raise ProtocolError("request_id must not be empty")
     preceding = _string(message["preceding_text"], "preceding_text")
+    following = _string(message["following_text"], "following_text") if "following_text" in message else ""
     reading = _string(message["read"], "read", max_bytes=512)
     candidates = message["candidates"]
     if not isinstance(candidates, list) or not candidates:
@@ -85,6 +89,7 @@ def validate_request(message: Any) -> Dict[str, Any]:
     return {
         "request_id": request_id,
         "preceding_text": preceding,
+        "following_text": following,
         "read": reading,
         "candidates": normalized,
     }

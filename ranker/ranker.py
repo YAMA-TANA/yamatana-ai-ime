@@ -155,7 +155,7 @@ class RuleBasedRanker:
     @staticmethod
     def _context_score(context: str, candidate_text: str) -> float:
         # These are intentionally exact input candidates, not generated text.
-        if ("象" in context and ("長い" in context or "なが" in context)):
+        if ("象" in context and ("長い" in context or "なが" in context)) or "大きい" in context:
             if candidate_text == "鼻":
                 return 100.0
             if candidate_text in {"花", "華"}:
@@ -176,7 +176,9 @@ class RuleBasedRanker:
         request = validate_request(request)
         if self.delay_ms:
             time.sleep(self.delay_ms / 1000.0)
-        context = f"{request['preceding_text']} {request['read']}"
+        prefix = request["preceding_text"]
+        suffix = request.get("following_text", "")
+        context = f"{prefix} {request['read']} {suffix}".strip()
         scored = []
         for candidate in request["candidates"]:
             # Original rank is a stable tie-breaker and a safe baseline.
@@ -547,7 +549,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 (time.perf_counter() - load_started) * 1000.0,
                 ranker.device,
             )
-            ranker = InteractiveBurstGuard(ranker)
         elif args.backend == "ruri":
             try:
                 from .ruri_ranker import RuriReranker

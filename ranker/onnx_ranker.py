@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -92,6 +93,12 @@ class OnnxRuriReranker:
 
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # ONNX Runtime otherwise chooses its own global thread-pool size.  On
+        # desktop CPUs that choice proved slow enough for a 20-candidate IME
+        # request to miss Mozc's 500 ms deadline.  A small local pool keeps the
+        # request inside the conversion budget without occupying every core.
+        options.intra_op_num_threads = min(8, max(2, os.cpu_count() or 2))
+        options.inter_op_num_threads = 1
         if use_gpu:
             options.enable_mem_pattern = False
             options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL

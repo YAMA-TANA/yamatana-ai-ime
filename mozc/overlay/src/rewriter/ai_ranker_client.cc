@@ -201,9 +201,19 @@ bool Client::Rank(const std::string& preceding_text, const std::string& reading,
                   const std::vector<CandidateInput>& candidates,
                   int timeout_ms,
                   std::vector<RankedCandidate>* ranked) const {
+  return Rank(preceding_text, std::string(), reading, candidates, timeout_ms,
+              ranked);
+}
+
+bool Client::Rank(const std::string& preceding_text,
+                  const std::string& following_text,
+                  const std::string& reading,
+                  const std::vector<CandidateInput>& candidates,
+                  int timeout_ms,
+                  std::vector<RankedCandidate>* ranked) const {
   if (ranked == nullptr || candidates.empty() || candidates.size() > 100 ||
       timeout_ms <= 0 || preceding_text.size() > 32768 ||
-      reading.size() > 512) {
+      following_text.size() > 32768 || reading.size() > 512) {
     return false;
   }
   const int budget_ms = std::min(timeout_ms, 500);
@@ -213,7 +223,9 @@ bool Client::Rank(const std::string& preceding_text, const std::string& reading,
   if (!EscapeJson(preceding_text, &escaped)) return false;
   json << "{\"request_id\":\"" << request_id
        << "\",\"preceding_text\":\"" << escaped
-       << "\",\"read\":";
+       << "\",\"following_text\":";
+  if (!EscapeJson(following_text, &escaped)) return false;
+  json << "\"" << escaped << "\",\"read\":";
   if (!EscapeJson(reading, &escaped)) return false;
   json << "\"" << escaped << "\",\"candidates\":[";
   std::set<std::string> allowed;
@@ -267,6 +279,11 @@ namespace ai_ranker {
 Client::Client(std::wstring) {}
 bool Client::Rank(const std::string&, const std::string&,
                   const std::vector<CandidateInput>&, int,
+                  std::vector<RankedCandidate>*) const {
+  return false;
+}
+bool Client::Rank(const std::string&, const std::string&,
+                  const std::string&, const std::vector<CandidateInput>&, int,
                   std::vector<RankedCandidate>*) const {
   return false;
 }
