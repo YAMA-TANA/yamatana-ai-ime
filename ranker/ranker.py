@@ -21,6 +21,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from product_settings import load_settings
+try:
+    from .lexicon import contextual_candidate_bonus
+except ImportError:
+    from lexicon import contextual_candidate_bonus
 
 try:  # When run as ``python -m ranker.ranker``.
     from .protocol import (MAX_LINE_BYTES, ProtocolError, loads_strict,
@@ -155,15 +159,13 @@ class RuleBasedRanker:
     @staticmethod
     def _context_score(context: str, candidate_text: str) -> float:
         # These are intentionally exact input candidates, not generated text.
-        if ("象" in context and ("長い" in context or "なが" in context)) or "大きい" in context:
+        contextual_bonus = contextual_candidate_bonus(context, candidate_text)
+        if contextual_bonus:
+            return contextual_bonus
+        if "大きい" in context:
             if candidate_text == "鼻":
                 return 100.0
             if candidate_text in {"花", "華"}:
-                return 8.0
-        if "庭" in context and ("咲" in context or "美しい" in context):
-            if candidate_text == "花":
-                return 100.0
-            if candidate_text in {"鼻", "華"}:
                 return 8.0
         if "電子工学" in context or "計算" in context:
             if candidate_text in {"機械", "計算機械"}:

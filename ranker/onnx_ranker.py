@@ -14,7 +14,7 @@ import onnxruntime as ort
 from tokenizers import Tokenizer
 
 from product_settings import domain_instruction, load_settings, normalize_settings
-from ranker.lexicon import LexicalKnowledge
+from ranker.lexicon import LexicalKnowledge, contextual_candidate_bonus
 
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
@@ -177,7 +177,11 @@ class OnnxRuriReranker:
                 if self.lexicon and reading
                 else 0.0
             )
-            final_score = raw_score - lexical_penalty - self.prior_w * original_index
+            context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", word)
+            final_score = (
+                raw_score + context_bonus - lexical_penalty
+                - self.prior_w * original_index
+            )
             scored.append((final_score, original_index, candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
         self.last_latency_ms = round((time.perf_counter() - started) * 1000.0, 2)

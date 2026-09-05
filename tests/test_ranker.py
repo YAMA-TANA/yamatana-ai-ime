@@ -13,6 +13,7 @@ import unittest
 
 from client.fallback import original_order, safe_rank
 from ranker.protocol import ProtocolError, loads_strict, validate_request, validate_response
+from ranker.lexicon import contextual_candidate_bonus
 from ranker.ranker import (InteractiveBurstGuard, RuleBasedRanker,
                            _low_integrity_pipe_security,
                            normalize_windows_pipe_name, process_line,
@@ -135,6 +136,11 @@ class RankerTests(unittest.TestCase):
     def test_acceptance_garden_flower(self):
         result = RuleBasedRanker().rank(request("庭に咲いた美しい"))
         self.assertEqual(result["candidates"][0]["id"], "c2")
+
+    def test_contextual_bonus_disambiguates_elephant_and_garden_sentences(self):
+        self.assertGreater(contextual_candidate_bonus("象は が長い", "鼻"), 90.0)
+        self.assertGreater(contextual_candidate_bonus("庭には美しい がある", "花"), 90.0)
+        self.assertLess(contextual_candidate_bonus("庭には美しい がある", "鼻"), 10.0)
 
     def test_acceptance_machine_calculation(self):
         req = {

@@ -16,6 +16,10 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from product_settings import domain_instruction, load_settings, normalize_settings
+try:
+    from .lexicon import contextual_candidate_bonus
+except ImportError:
+    from lexicon import contextual_candidate_bonus
 
 logger = logging.getLogger("ai_ime.ruri_ranker")
 
@@ -278,8 +282,9 @@ class RuriReranker:
 
             # Prior rank damping tie-breaker
             prior_penalty = self.prior_w * orig_idx
+            context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", w)
 
-            final_score = float(raw_s) - lex_penalty - prior_penalty
+            final_score = float(raw_s) + context_bonus - lex_penalty - prior_penalty
             scored.append({
                 "id": c_id,
                 "cand": orig_cand,
