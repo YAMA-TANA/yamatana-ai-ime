@@ -200,9 +200,21 @@ def build_msi() -> Path:
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     privacy_rtf = BUILD_DIR / "privacy_policy_ja.rtf"
     runtime_wxs = BUILD_DIR / "runtime_files.wxs"
+    installer_wxs = BUILD_DIR / "installer_oss_64bit.wxs"
     _make_privacy_rtf(ROOT / "PRIVACY.md", privacy_rtf)
     file_count = _make_runtime_fragment(runtime_wxs)
     support = _stage_support_files()
+    installer_text = (MOZC / "win32" / "installer" / "installer_oss_64bit.wxs").read_text(
+        encoding="utf-8"
+    )
+    installer_text = installer_text.replace(
+        '    <CustomAction Id="LaunchYamatanaTray" FileRef="YamatanaAIIME.exe" ExeCommand="--from-installer" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />\n',
+        "",
+    ).replace(
+        '      <Custom Action="LaunchYamatanaTray" Before="InstallFinalize" Condition="(NOT Installed) AND (ACTION=&quot;INSTALL&quot;)" />\n',
+        "",
+    )
+    installer_wxs.write_text(installer_text, encoding="utf-8")
 
     wix_command = shutil.which("wix") or shutil.which("wix.exe")
     if not wix_command:
@@ -237,7 +249,7 @@ def build_msi() -> Path:
         command.extend(["-define", f"{name}={value}"])
     command.extend([
         "-out", str(MSI_OUT),
-        str(MOZC / "win32" / "installer" / "installer_oss_64bit.wxs"),
+        str(installer_wxs),
         str(runtime_wxs),
     ])
     print(f"Packaging {file_count} runtime files with Mozc and installer actions...")
