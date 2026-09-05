@@ -218,10 +218,10 @@ index 0000000..9c687ba
 +      return false;
 +    }
 +    RankedCandidate candidate;
-+    candidate.id = match[1].str();
++    candidate.id = match[2].str();
 +    try {
-+      candidate.score = std::stod(match[2].str());
-+      candidate.rank = std::stoi(match[6].str());
++      candidate.score = std::stod(match[3].str());
++      candidate.rank = std::stoi(match[7].str());
 +    } catch (...) {
 +      return false;
 +    }
