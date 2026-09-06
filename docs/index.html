@@ -9,8 +9,10 @@
   <meta property="og:title" content="Yamatana AI IME — 文脈を見て、変換候補を選び直す">
   <meta property="og:description" content="Mozc × 70MローカルAI。距離なら「測った」、時間なら「計った」。入力内容はPCの外へ送りません。">
   <title>Yamatana AI IME — 文脈を見て、変換候補を選び直す</title>
-  <link rel="stylesheet" href="./styles.css">
-  <script defer src="./app.js"></script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23e9cf45'/%3E%3Cpath d='M14 14h10l8 15 8-15h10L37 38v12H27V38z' fill='%23131a29'/%3E%3C/svg%3E">
+  <style>html{background:#0d1220}body{margin:0;background:#f6f3e8;color:#172033;font-family:"Yu Gothic UI","Hiragino Sans","Noto Sans JP",system-ui,sans-serif}.hero{background:#0d1220;color:#fff}.site-header{min-height:72px}.shell{width:min(1180px,calc(100% - 40px));margin:auto}</style>
+  <link rel="stylesheet" href="/yamatana-ai-ime/styles.css?v=20260906-3">
+  <script defer src="/yamatana-ai-ime/app.js?v=20260906-3"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">本文へ移動</a>
@@ -22,7 +24,8 @@
         <span class="brand-copy"><strong>Yamatana AI IME</strong><span>MOZC Ver · Public Beta</span></span>
       </a>
       <nav class="nav-links" aria-label="メインナビゲーション">
-        <a href="#demo">変換例</a>
+        <a href="#demo">変換デモ</a>
+        <a href="#examples">実例集</a>
         <a href="#performance">性能</a>
         <a href="#design">仕組み</a>
         <a href="#privacy">プライバシー</a>
@@ -43,7 +46,7 @@
           <p class="hero-lead">たとえば「はかった」。距離なら「測った」、時間なら「計った」、重さなら「量った」。Yamatana AI IMEは、Mozcが出した候補を<strong>70M級のローカルAI</strong>で並べ直します。</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/YAMA-TANA/yamatana-ai-ime/releases/tag/v2.0.0-beta">Windows版を試す <span aria-hidden="true">→</span></a>
-            <a class="button button-secondary" href="#performance">実測性能を見る</a>
+            <a class="button button-secondary" href="#examples">変換例をもっと見る</a>
           </div>
           <div class="hero-trust">
             <span><b>67.8 MB</b> CPU INT8</span>
@@ -65,6 +68,10 @@
                 <button class="demo-tab" data-example="time" role="tab" aria-selected="false">時間</button>
                 <button class="demo-tab" data-example="weight" role="tab" aria-selected="false">重さ</button>
                 <button class="demo-tab" data-example="improve" role="tab" aria-selected="false">改善</button>
+                <button class="demo-tab" data-example="friend" role="tab" aria-selected="false">旧友</button>
+                <button class="demo-tab" data-example="accident" role="tab" aria-selected="false">事故</button>
+                <button class="demo-tab" data-example="law" role="tab" aria-selected="false">法律</button>
+                <button class="demo-tab" data-example="gpu" role="tab" aria-selected="false">GPU</button>
               </div>
               <div class="sentence-card">
                 <span class="sentence-label">入力中の文章</span>
@@ -112,6 +119,45 @@
       </div>
     </section>
 
+    <section class="section demo-gallery-section" id="examples">
+      <div class="shell">
+        <div class="section-heading centered reveal">
+          <span class="kicker">CONVERSION SHOWCASE</span>
+          <h2>一つの読みでも、文脈が変われば答えも変わる。</h2>
+          <p>同じ読みを、文章の意味に合わせて選び分ける例です。カードを押すと上のIMEデモにも反映できます。</p>
+        </div>
+        <div class="demo-gallery reveal">
+          <button class="demo-case" data-example="distance"><span class="case-reading">はかった</span><p>レーザーで壁までの距離を<strong>測った</strong>。</p><small>計った / 量った / 図った</small></button>
+          <button class="demo-case" data-example="time"><span class="case-reading">はかった</span><p>駅まで何分かかるか時間を<strong>計った</strong>。</p><small>測った / 量った / 図った</small></button>
+          <button class="demo-case" data-example="weight"><span class="case-reading">はかった</span><p>発送前に荷物の重さを<strong>量った</strong>。</p><small>測った / 計った / 図った</small></button>
+          <button class="demo-case" data-example="improve"><span class="case-reading">はかった</span><p>工程を見直し、効率化を<strong>図った</strong>。</p><small>測った / 計った / 量った</small></button>
+
+          <button class="demo-case" data-example="friend"><span class="case-reading">あって</span><p>駅前で旧友に<strong>会って</strong>話し込んだ。</p><small>遭って / 合って</small></button>
+          <button class="demo-case" data-example="accident"><span class="case-reading">あって</span><p>帰宅途中に事故に<strong>遭って</strong>しまった。</p><small>会って / 合って</small></button>
+          <button class="demo-case" data-example="match"><span class="case-reading">あって</span><p>二人の計算結果は<strong>合って</strong>いる。</p><small>会って / 遭って</small></button>
+
+          <button class="demo-case" data-example="law"><span class="case-reading">おかした</span><p>会社は重大な法令違反を<strong>犯した</strong>。</p><small>冒した / 侵した</small></button>
+          <button class="demo-case" data-example="risk"><span class="case-reading">おかして</span><p>危険を<strong>冒して</strong>救助に向かった。</p><small>犯して / 侵して</small></button>
+          <button class="demo-case" data-example="territory"><span class="case-reading">おかした</span><p>他国の領海を<strong>侵した</strong>。</p><small>犯した / 冒した</small></button>
+
+          <button class="demo-case" data-example="share"><span class="case-reading">しめて</span><p>国内売上が全体の半分を<strong>占めて</strong>いる。</p><small>締めて / 閉めて</small></button>
+          <button class="demo-case" data-example="tie"><span class="case-reading">しめて</span><p>出発前にネクタイを<strong>締めて</strong>鏡を見た。</p><small>占めて / 閉めて</small></button>
+          <button class="demo-case" data-example="door"><span class="case-reading">しめて</span><p>冷房中なのでドアを<strong>閉めて</strong>ください。</p><small>締めて / 占めて</small></button>
+
+          <button class="demo-case" data-example="light"><span class="case-reading">つけて</span><p>暗くなったので明かりを<strong>点けて</strong>ください。</p><small>付けて / 着けて</small></button>
+          <button class="demo-case" data-example="mask"><span class="case-reading">つけて</span><p>診察室ではマスクを<strong>着けて</strong>ください。</p><small>付けて / 点けて</small></button>
+          <button class="demo-case" data-example="tag"><span class="case-reading">つけて</span><p>受付で胸に名札を<strong>付けて</strong>もらった。</p><small>着けて / 点けて</small></button>
+
+          <button class="demo-case" data-example="photo"><span class="case-reading">とった</span><p>夕焼けの写真を<strong>撮った</strong>。</p><small>取った / 捕った</small></button>
+          <button class="demo-case" data-example="license"><span class="case-reading">とった</span><p>大学在学中に資格を<strong>取った</strong>。</p><small>撮った / 捕った</small></button>
+          <button class="demo-case" data-example="fish"><span class="case-reading">とった</span><p>川で大きな魚を<strong>捕った</strong>。</p><small>取った / 撮った</small></button>
+
+          <button class="demo-case" data-example="gpu"><span class="case-reading">すいろん</span><p>DirectMLでモデルの<strong>推論</strong>を高速化した。</p><small>水論 / 推論</small></button>
+          <button class="demo-case" data-example="quant"><span class="case-reading">りょうしか</span><p>モデルをINT8に<strong>量子化</strong>して軽くした。</p><small>漁師か / 量子化</small></button>
+        </div>
+      </div>
+    </section>
+
     <section class="section performance-section" id="performance">
       <div class="performance-glow" aria-hidden="true"></div>
       <div class="shell">
@@ -149,7 +195,7 @@
         <div class="benchmark-disclaimer reveal">
           <div class="disclaimer-mark">i</div>
           <p><strong>この90%台は「一般文章すべての正答率」ではありません。</strong> 学習文との文章一致・クエリ重複がないことを確認したうえで、Mozcの単純変換が苦手な文脈依存問題を120問選んだストレステストです。評価条件を隠さず公開しています。</p>
-          <a href="./DISTILLATION_QUANTIZATION_AND_GPU_INFERENCE_JA.md">評価条件を読む →</a>
+          <a href="/yamatana-ai-ime/DISTILLATION_QUANTIZATION_AND_GPU_INFERENCE_JA.md">評価条件を読む →</a>
         </div>
       </div>
     </section>
