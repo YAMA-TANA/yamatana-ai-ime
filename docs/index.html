@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Yamatana AI IMEは、Mozcの変換候補を70M級ローカルAIで文脈に応じて再順位付けするWindows向け日本語IMEです。入力内容は外部へ送信しません。">
+  <meta name="theme-color" content="#f6f1dd">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Yamatana AI IME — 文脈を読む、ローカルAI日本語IME">
+  <meta property="og:description" content="Mozc × 70MローカルAI。入力内容を外部へ送らず、文脈に合う変換候補を選びます。">
+  <title>Yamatana AI IME — 文脈を読む、ローカルAI日本語IME</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+
+  <header class="site-header">
+    <div class="nav shell">
+      <a class="brand" href="#top" aria-label="Yamatana AI IME トップ">
+        <span class="brand-mark" aria-hidden="true">Y</span>
+        <span class="brand-copy">
+          <strong>Yamatana AI IME</strong>
+          <span>MOZC Ver</span>
+        </span>
+      </a>
+      <nav class="nav-links" aria-label="メインナビゲーション">
+        <a href="#features">特徴</a>
+        <a href="#benchmarks">性能</a>
+        <a href="#privacy">プライバシー</a>
+        <a class="nav-github" href="https://github.com/YAMA-TANA/yamatana-ai-ime">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-orb hero-orb-a" aria-hidden="true"></div>
+      <div class="hero-orb hero-orb-b" aria-hidden="true"></div>
+      <div class="shell hero-grid">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="eyebrow-dot"></span> Windows 10 / 11 · Public Beta</div>
+          <h1>文脈を読む。<br><span>でも、外には出さない。</span></h1>
+          <p class="hero-lead">Mozcの変換候補を、IME専用に蒸留した<strong>70M級ローカルAI</strong>が再順位付け。文章の流れに合う表記を、あなたのPCの中だけで選びます。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/YAMA-TANA/yamatana-ai-ime/releases/tag/v2.0.0-beta">v2.0.0-beta を入手 <span aria-hidden="true">→</span></a>
+            <a class="button button-secondary" href="https://github.com/YAMA-TANA/yamatana-ai-ime">ソースを見る</a>
+          </div>
+          <div class="hero-notes" aria-label="主な特徴">
+            <span>✓ ローカル推論</span>
+            <span>✓ Mozcベース</span>
+            <span>✓ CPU / GPU対応</span>
+          </div>
+        </div>
+
+        <div class="demo-wrap" aria-label="変換デモ">
+          <div class="demo-window">
+            <div class="window-bar">
+              <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div class="window-title">Yamatana AI IME</div>
+              <div class="ai-pill"><span></span> AI ON</div>
+            </div>
+            <div class="demo-body">
+              <div class="context-label">文章</div>
+              <p class="typed-text">レーザーで壁までの距離を<span class="reading">はかった</span>。</p>
+              <div class="candidate-list" aria-label="変換候補例">
+                <div class="candidate selected"><span class="rank">1</span><strong>測った</strong><span class="reason">距離・長さ</span></div>
+                <div class="candidate"><span class="rank">2</span><span>計った</span></div>
+                <div class="candidate"><span class="rank">3</span><span>量った</span></div>
+                <div class="candidate"><span class="rank">4</span><span>図った</span></div>
+              </div>
+              <div class="demo-footer">
+                <span class="local-badge"><span aria-hidden="true">●</span> このPC内で処理</span>
+                <span>Ruri 70M · ONNX Runtime</span>
+              </div>
+            </div>
+          </div>
+          <div class="float-card float-card-a"><span>67.8</span><small>MB / CPU INT8</small></div>
+          <div class="float-card float-card-b"><span>1 batch</span><small>全候補を一括評価</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="技術概要">
+      <div class="shell trust-grid">
+        <div><strong>70.1M</strong><span>parameters</span></div>
+        <div><strong>67.8 MB</strong><span>CPU INT8 model</span></div>
+        <div><strong>134.1 MB</strong><span>GPU FP16 model</span></div>
+        <div><strong>100%</strong><span>local inference</span></div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="shell">
+        <div class="section-heading">
+          <span class="kicker">WHY YAMATANA</span>
+          <h2>普通のIMEを壊さず、<br>必要なところだけAIに。</h2>
+          <p>巨大な生成AIに文章を書かせるのではなく、Mozcが作った候補の「順番」だけを文脈から判断します。</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card feature-yellow">
+            <div class="feature-icon" aria-hidden="true">↕</div>
+            <h3>候補を再順位付け</h3>
+            <p>Mozcの通常変換を土台にしながら、文脈に合う候補をAIが上へ。AIが止まってもMozcへフォールバックします。</p>
+          </article>
+          <article class="feature-card feature-blue">
+            <div class="feature-icon" aria-hidden="true">⌂</div>
+            <h3>入力はPCの中だけ</h3>
+            <p>文章、前後文脈、辞書、推論結果を外部AIサービスへ送信しません。テレメトリも実装していません。</p>
+          </article>
+          <article class="feature-card feature-coral">
+            <div class="feature-icon" aria-hidden="true">⚡</div>
+            <h3>70Mへ蒸留</h3>
+            <p>310MのIME向けteacherから知識蒸留。CPUではDynamic INT8、GPUではDirectML FP16を使います。</p>
+          </article>
+          <article class="feature-card feature-mint">
+            <div class="feature-icon" aria-hidden="true">▤</div>
+            <h3>全候補を1バッチ</h3>
+            <p>候補ごとに何度もAIを呼ばず、Mozcの候補リスト全体を1回のONNX Runtime実行でまとめて採点します。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-contrast" id="benchmarks">
+      <div class="shell benchmark-layout">
+        <div class="benchmark-copy">
+          <span class="kicker">SMALLER, STILL STRONG</span>
+          <h2>約4.5倍小さく。<br>IMEの判断力は、ほぼそのまま。</h2>
+          <p>310M teacherを70M studentへ蒸留し、配布サイズと推論負荷を大きく削減しました。</p>
+          <a class="text-link" href="./DISTILLATION_QUANTIZATION_AND_GPU_INFERENCE_JA.md">技術解説と評価条件を見る <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="benchmark-card">
+          <div class="metric-row">
+            <div class="metric-label"><span>CPUモデル</span><small>Dynamic INT8</small></div>
+            <div class="metric-values"><del>317.7 MB</del><strong>67.8 MB</strong></div>
+            <div class="bar"><span style="width:21.3%"></span></div>
+          </div>
+          <div class="metric-row">
+            <div class="metric-label"><span>GPUモデル</span><small>FP16 / DirectML</small></div>
+            <div class="metric-values"><del>631.0 MB</del><strong>134.1 MB</strong></div>
+            <div class="bar"><span style="width:21.3%"></span></div>
+          </div>
+          <div class="metric-row metric-accuracy">
+            <div class="metric-label"><span>高難度hold-out</span><small>CPU INT8 · 120問</small></div>
+            <div class="metric-values"><span class="teacher">Teacher 91.67%</span><strong>Student 90.83%</strong></div>
+            <div class="accuracy-scale"><span style="width:90.83%"></span></div>
+          </div>
+          <p class="benchmark-note">※ 高難度の文脈依存変換問題を選別した120問セットでの結果です。一般文章全体の正答率を示すものではありません。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="privacy">
+      <div class="shell privacy-panel">
+        <div class="privacy-seal" aria-hidden="true"><span>LOCAL</span><strong>AI</strong></div>
+        <div class="privacy-copy">
+          <span class="kicker">PRIVACY FIRST</span>
+          <h2>変換のために、文章をクラウドへ渡さない。</h2>
+          <p>Yamatana AI IMEのAI推論はローカルで動作します。入力内容や前後文脈を外部AI APIへ送信せず、AIモデル自体にも通信機能はありません。</p>
+          <div class="privacy-links">
+            <a class="text-link" href="../PRIVACY.md">プライバシーポリシー <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="../MODEL_CARD.md">モデルカード <span aria-hidden="true">→</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section howto-section" id="start">
+      <div class="shell">
+        <div class="section-heading compact">
+          <span class="kicker">GET STARTED</span>
+          <h2>3ステップで使えます。</h2>
+        </div>
+        <ol class="steps">
+          <li><span class="step-number">01</span><div><strong>MSIをインストール</strong><p>GitHub Releasesから最新版を取得。現在のBetaは未署名です。</p></div></li>
+          <li><span class="step-number">02</span><div><strong>Win + Spaceで選択</strong><p>「Yamatana AI IME (MOZC Ver)」へ切り替えます。</p></div></li>
+          <li><span class="step-number">03</span><div><strong>必要な時だけAIをON</strong><p>通知領域のYamatanaアイコンからAI変換を有効化。初期状態はOFFです。</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="cta-section">
+      <div class="shell cta-card">
+        <div>
+          <span class="kicker">PUBLIC BETA</span>
+          <h2>日本語入力を、<br>もう少し文脈に強く。</h2>
+          <p>Windows x64向け。まずはβ版で、実際の文章を変換してみてください。</p>
+        </div>
+        <div class="cta-actions">
+          <a class="button button-dark" href="https://github.com/YAMA-TANA/yamatana-ai-ime/releases/tag/v2.0.0-beta">ダウンロード <span aria-hidden="true">→</span></a>
+          <a class="button button-ghost" href="https://github.com/YAMA-TANA/yamatana-ai-ime/issues">不具合・変換例を報告</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>
+        <strong>Yamatana AI IME</strong>
+        <p>Mozc-based local AI Japanese IME for Windows.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/YAMA-TANA/yamatana-ai-ime">GitHub</a>
+        <a href="../LICENSE">Apache-2.0</a>
+        <a href="../PRIVACY.md">Privacy</a>
+      </div>
+      <p class="footer-note">Yamatana独自部分はApache License 2.0。Mozc・Ruri・同梱ライブラリには各上流ライセンスが適用されます。</p>
+    </div>
+  </footer>
+</body>
+</html>
