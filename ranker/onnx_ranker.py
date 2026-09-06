@@ -18,6 +18,7 @@ from ranker.lexicon import LexicalKnowledge, contextual_candidate_bonus
 
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
+_CONTEXT_NOISE = set(" \t\r\n、。,.!?！？「」『』（）()［］[]【】{}・:：;；")
 
 
 def _runtime_roots() -> list[Path]:
@@ -35,6 +36,60 @@ def _resolve_first(relative_paths: tuple[str, ...]) -> Optional[Path]:
             if candidate.exists():
                 return candidate
     return None
+
+
+def _context_signal_length(prefix: str, suffix: str) -> int:
+    """Approximate how much real linguistic evidence surrounds the conversion."""
+    return sum(1 for char in prefix + suffix if char not in _CONTEXT_NOISE)
+
+
+def _required_override_margin(context_len: int, original_index: int) -> float:
+    """Return the minimum AI score lead required to replace Mozc's top choice.
+
+    A two-character fragment such as ``この`` is weak evidence, so the model
+    must win by a large margin.  Lower Mozc candidates also require stronger
+    evidence before they are promoted all the way to rank 1.
+    """
+    margin = 0.75
+    if context_len <= 2:
+        margin += 3.0
+    elif context_len <= 5:
+        margin += 1.25
+    elif context_len <= 10:
+        margin += 0.35
+    margin += min(max(original_index, 0), 8) * 0.20
+    return margin
+
+
+def _preserve_mozc_top_if_uncertain(
+    scored: list[tuple[float, int, str]], prefix: str, suffix: str
+) -> list[tuple[float, int, str]]:
+    """Keep Mozc rank 1 unless the reranker has enough evidence to override it.
+
+    Context-free calls are reserved for explicit compound-boundary repair in
+    the Mozc rewriter, so those keep the old free-reranking behaviour.
+    """
+    if not scored:
+        return scored
+    context_len = _context_signal_length(prefix, suffix)
+    if context_len == 0:
+        return scored
+
+    mozc_top = next((item for item in scored if item[1] == 0), None)
+    ai_top = scored[0]
+    if mozc_top is None or ai_top[1] == 0:
+        return scored
+
+    actual_margin = ai_top[0] - mozc_top[0]
+    required_margin = _required_override_margin(context_len, ai_top[1])
+    if actual_margin >= required_margin:
+        return scored
+
+    LOG.debug(
+        "preserving Mozc top: ai_index=%s actual_margin=%.3f required_margin=%.3f context_len=%s",
+        ai_top[1], actual_margin, required_margin, context_len,
+    )
+    return [mozc_top] + [item for item in scored if item is not mozc_top]
 
 
 class OnnxRuriReranker:
@@ -99,10 +154,6 @@ class OnnxRuriReranker:
 
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # ONNX Runtime otherwise chooses its own global thread-pool size.  On
-        # desktop CPUs that choice proved slow enough for a multi-candidate IME
-        # request to miss the conversion deadline.  A small local pool keeps
-        # the request responsive without occupying every core.
         options.intra_op_num_threads = min(8, max(2, os.cpu_count() or 2))
         options.inter_op_num_threads = 1
         if use_gpu:
@@ -129,9 +180,6 @@ class OnnxRuriReranker:
         }
 
     def _warmup(self) -> None:
-        # Warm a representative full Mozc candidate page.  Production keeps a
-        # variable batch so every candidate is evaluated in the same forward
-        # pass instead of truncating or issuing per-candidate model calls.
         warmup_count = 32
         query = "文書方針: 一般的な日本語文書。\n文脈に合う表記を選びなさい。"
         inputs = self._encode(
@@ -167,10 +215,6 @@ class OnnxRuriReranker:
             f"文書方針: {self.document_instruction}\n"
             f"文脈「{prefix}____{suffix}」に最も適切な表記を選びなさい。"
         )
-        # One encode batch and one session.run for the complete Mozc candidate
-        # list, including duplicate surface forms with distinct candidate IDs.
-        # Keeping duplicates in the tensor makes this contract observable and
-        # prevents hidden per-item inference paths from creeping back in.
         inputs = self._encode(
             [query] * len(all_candidates),
             [f"{prefix}{word}{suffix}" for _index, _candidate_id, word in all_candidates],
@@ -192,6 +236,7 @@ class OnnxRuriReranker:
             )
             scored.append((final_score, original_index, candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
+        scored = _preserve_mozc_top_if_uncertain(scored, prefix, suffix)
         self.last_latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
         return {
             "request_id": request_id,

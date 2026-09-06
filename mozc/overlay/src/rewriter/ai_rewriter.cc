@@ -41,12 +41,23 @@ bool IsRerankableSegment(const converter::Segment& segment) {
          segment.segment_type() == converter::Segment::FIXED_BOUNDARY;
 }
 
+bool IsGrammarLikeKey(absl::string_view key) {
+  // Short grammatical words are common at the end of ordinary phrases.  They
+  // must never trigger the compound-merging heuristic that exists for lexical
+  // repairs such as 主戦 + 率 -> 主旋律.
+  return key == "こと" || key == "もの" || key == "ため" ||
+         key == "よう" || key == "ので" || key == "のに" ||
+         key == "から" || key == "まで" || key == "だけ" ||
+         key == "ほど" || key == "する" || key == "した" ||
+         key == "して" || key == "です" || key == "ます" ||
+         key == "いる" || key == "ある" || key == "なる" ||
+         key == "ない" || key == "たい" || key == "れる" ||
+         key == "られる" || key == "せる" || key == "させる";
+}
+
 bool ApplyPermutation(converter::Segment* segment,
                       const std::vector<ai_ranker::RankedCandidate>& ranked,
                       size_t limit) {
-  // Validate the complete ID permutation before moving any candidate.  The
-  // client performs the wire-schema checks too, but this second check binds
-  // the response to this exact Segment and avoids partial mutation.
   std::vector<size_t> desired;
   desired.reserve(limit);
   std::vector<bool> seen(limit, false);
@@ -70,8 +81,6 @@ bool ApplyPermutation(converter::Segment* segment,
     if (!value) return false;
   }
 
-  // Every possible failure was checked above.  Keep a small permutation of
-  // original local IDs so the actual Segment mutation has no fallible path.
   std::vector<size_t> current_ids(limit);
   for (size_t i = 0; i < limit; ++i) current_ids[i] = i;
   std::vector<std::pair<int, int>> moves;
@@ -101,11 +110,6 @@ bool ApplyPermutation(converter::Segment* segment,
 }  // namespace
 
 int AiRewriter::capability(const ConversionRequest& request) const {
-  // Keep AI out of prediction/suggestion paths: conversion is the path whose
-  // candidates are committed and for which a context rerank is useful.
-  // RealtimeDecoder invokes the converter with CONVERSION request type while
-  // the user is still typing.  It marks that internal request so expensive
-  // rewriters can stay off the latency-critical path.
   if (request.options().skip_slow_rewriters ||
       request.options().used_in_predictor_realtime_conversion) {
     return RewriterInterface::NOT_AVAILABLE;
@@ -133,10 +137,7 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
   // Mozc sometimes collapses a phrase into one segment with only a handful of
   // compound candidates (e.g. 飛行少年), hiding a better combination of
   // ordinary dictionary words (非行 + 少年).  Recover a boundary only when
-  // there is exactly one split whose two sides are dictionary keys.  Requiring
-  // two or more characters on each side avoids destabilizing short words and
-  // inflections.  The recursive conversion then supplies real Mozc candidates
-  // for both sides; AiRewriter still only reorders those candidates.
+  // there is exactly one split whose two sides are dictionary keys.
   if (count == 1) {
     const converter::Segment& segment = segments.conversion_segment(0);
     if (dictionary_ == nullptr || !IsRerankableSegment(segment) ||
@@ -171,12 +172,13 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return resize_request;
   }
 
-  // A compound word may be split so that the intended surface form does not
-  // exist in any individual segment (e.g. 主戦 + 率 instead of 主旋律).
-  // Ask Mozc to generate its normal candidates once more with a single short
-  // boundary.  AiRewriter can then rank the real dictionary candidate without
-  // generating text.  A resized compound is useful even without surrounding
-  // text because the candidate's whole-word naturalness is itself evidence.
+  // Multi-segment repair is deliberately limited to two lexical pieces.
+  // Merging three or four ordinary phrase segments made grammatical text such
+  // as 「私が / する / こと」 behave like one compound and prevented normal
+  // segment-by-segment conversion.  The two-part cases needed for v2 remain:
+  // 主戦 + 率 can be merged, while 飛行 + 少年 can have its boundary locked.
+  if (count != 2) return std::nullopt;
+
   size_t total_key_chars = 0;
   for (const converter::Segment& segment : segments.conversion_segments()) {
     if (segment.segment_type() != converter::Segment::FREE) {
@@ -188,27 +190,30 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return std::nullopt;
   }
 
-  // A short trailing segment is usually an affix-like piece whose intended
-  // spelling may only exist as a whole-word candidate (主戦 + 率 -> 主旋律),
-  // so merge it.  Otherwise lock Mozc's useful word boundary before a later
-  // collocation rewriter can collapse it (非行 + 少年 -> 飛行少年).
+  const converter::Segment& first = segments.conversion_segment(0);
+  const converter::Segment& second = segments.conversion_segment(1);
   ResizeSegmentsRequest resize_request = {.segment_index = 0};
-  if (segments.conversion_segment(count - 1).key_len() <= 2) {
+
+  if (second.key_len() <= 2) {
+    // Only lexical-looking two-part compounds may be merged.  Short function
+    // words such as こと/もの/する are kept under Mozc's normal segmentation.
+    if (total_key_chars < kMinCompoundChars || IsGrammarLikeKey(first.key()) ||
+        IsGrammarLikeKey(second.key())) {
+      return std::nullopt;
+    }
     resize_request.segment_sizes[0] =
         static_cast<uint8_t>(total_key_chars);
   } else {
-    for (size_t i = 0; i < count; ++i) {
-      resize_request.segment_sizes[i] = static_cast<uint8_t>(
-          segments.conversion_segment(i).key_len());
-    }
+    // Preserve a useful lexical boundary such as 飛行 + 少年 so that a later
+    // collocation rewriter cannot collapse it back into 飛行少年.
+    resize_request.segment_sizes[0] = static_cast<uint8_t>(first.key_len());
+    resize_request.segment_sizes[1] = static_cast<uint8_t>(second.key_len());
   }
   return resize_request;
 }
 
 bool AiRewriter::Rewrite(const ConversionRequest& request,
                          Segments* segments) const {
-  // Keep the direct-call path safe too.  MergerRewriter normally checks
-  // capability(), but tests and other callers can invoke Rewrite directly.
   if (request.options().skip_slow_rewriters ||
       request.options().used_in_predictor_realtime_conversion) {
     return false;
@@ -217,24 +222,16 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
     return false;
   }
 
-  // Some TSF hosts (notably Chromium/Electron editors) do not expose text
-  // before the caret through ITfRange.  Mozc still retains recently committed
-  // segments in the conversion session, so use that privacy-local history as
-  // the context fallback instead of asking the model to rank context-free.
   std::string preceding_text(request.context().preceding_text());
   if (preceding_text.empty()) {
     preceding_text = segments->history_value();
   }
-  // Ordinary context-free single words keep Mozc's order.  A resized compound
-  // is different: either its whole-word candidates or its neighboring
-  // segments provide enough lexical context to repair a collapsed boundary.
   if (preceding_text.empty() && !segments->resized()) {
     return false;
   }
 
   const std::string trailing_text(request.context().following_text());
 
-  // Pre-count the segments we may rerank so the budget is shared fairly.
   size_t rerankable_segments = 0;
   for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {
     const converter::Segment& seg = segments->conversion_segment(i);
@@ -264,9 +261,6 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
       continue;
     }
 
-    // Score every candidate Mozc produced.  The 70M runtime sends the complete
-    // candidate list through one batched forward pass, so lower-ranked but
-    // contextually correct words are not hidden by an arbitrary top-N cutoff.
     const size_t limit = segment->candidates_size();
     std::vector<ai_ranker::CandidateInput> input;
     input.reserve(limit);
@@ -276,9 +270,6 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
                        static_cast<int>(i + 1)});
     }
 
-    // Compose the suffix from later free segments' top candidate values
-    // and the text following the conversion point.  This lets the ranker
-    // disambiguate phrases such as 「庭には美しい●が咲く」.
     std::string following_text = trailing_text;
     for (size_t later = index + 1;
          later < segments->conversion_segments_size(); ++later) {
@@ -300,8 +291,6 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
         std::string(segment->key().data(), segment->key().size()), input,
         remaining_ms, &ranked);
     if (!rank_ok || ranked.size() != limit) {
-      // Preserve Mozc's order for this segment but keep going so later
-      // segments still receive context built from this segment's top value.
       accumulated.append(std::string(segment->candidate(0).value.data(),
                                      segment->candidate(0).value.size()));
       continue;
