@@ -28,6 +28,16 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+constexpr size_t kBoundaryDictionaryLimit = 6;
+constexpr size_t kBoundaryRepairLimit = 12;
+constexpr int kBoundaryProbeTimeoutMs = 700;
+constexpr double kBoundaryRepairMargin = 0.60;
+
+struct SurfaceOption {
+  std::string value;
+  int64_t cost = 0;
+};
+
 int RemainingBudgetMs(const Clock::time_point& deadline) {
   const auto now = Clock::now();
   if (now >= deadline) return 0;
@@ -42,9 +52,6 @@ bool IsRerankableSegment(const converter::Segment& segment) {
 }
 
 bool IsGrammarLikeKey(absl::string_view key) {
-  // Short grammatical words are common at the end of ordinary phrases.  They
-  // must never trigger the compound-merging heuristic that exists for lexical
-  // repairs such as 主戦 + 率 -> 主旋律.
   return key == "こと" || key == "もの" || key == "ため" ||
          key == "よう" || key == "ので" || key == "のに" ||
          key == "から" || key == "まで" || key == "だけ" ||
@@ -53,6 +60,162 @@ bool IsGrammarLikeKey(absl::string_view key) {
          key == "いる" || key == "ある" || key == "なる" ||
          key == "ない" || key == "たい" || key == "れる" ||
          key == "られる" || key == "せる" || key == "させる";
+}
+
+void AddSurfaceOption(std::vector<SurfaceOption>* options, std::string value,
+                      int64_t cost) {
+  if (options == nullptr || value.empty()) return;
+  auto existing = std::find_if(options->begin(), options->end(),
+                               [&](const SurfaceOption& option) {
+                                 return option.value == value;
+                               });
+  if (existing == options->end()) {
+    options->push_back({std::move(value), cost});
+  } else if (cost < existing->cost) {
+    existing->cost = cost;
+  }
+}
+
+std::vector<SurfaceOption> LookupExactSurfaces(
+    const dictionary::DictionaryInterface* dictionary, absl::string_view key,
+    size_t limit = kBoundaryDictionaryLimit) {
+  std::vector<SurfaceOption> options;
+  if (dictionary == nullptr || key.empty()) return options;
+
+  dictionary::InlineCallback callback;
+  callback.OnToken(
+      [&](absl::string_view, absl::string_view,
+          const dictionary::Token& token) {
+        AddSurfaceOption(&options, token.value, token.cost);
+        return dictionary::DictionaryInterface::Callback::TRAVERSE_CONTINUE;
+      });
+  dictionary->LookupExact(key, &callback);
+
+  std::sort(options.begin(), options.end(),
+            [](const SurfaceOption& lhs, const SurfaceOption& rhs) {
+              if (lhs.cost != rhs.cost) return lhs.cost < rhs.cost;
+              return lhs.value < rhs.value;
+            });
+  if (options.size() > limit) options.resize(limit);
+  return options;
+}
+
+bool ContainsSurface(const std::vector<SurfaceOption>& options,
+                     absl::string_view value) {
+  return std::any_of(options.begin(), options.end(),
+                     [&](const SurfaceOption& option) {
+                       return option.value == value;
+                     });
+}
+
+bool SegmentContainsSurface(const converter::Segment& segment,
+                            absl::string_view value) {
+  for (size_t i = 0; i < segment.candidates_size(); ++i) {
+    if (segment.candidate(i).value == value) return true;
+  }
+  return false;
+}
+
+std::vector<SurfaceOption> BuildSplitSurfaces(
+    const dictionary::DictionaryInterface* dictionary,
+    absl::string_view left_key, absl::string_view right_key) {
+  const std::vector<SurfaceOption> left =
+      LookupExactSurfaces(dictionary, left_key);
+  const std::vector<SurfaceOption> right =
+      LookupExactSurfaces(dictionary, right_key);
+  std::vector<SurfaceOption> combined;
+  if (left.empty() || right.empty()) return combined;
+
+  for (const SurfaceOption& lhs : left) {
+    for (const SurfaceOption& rhs : right) {
+      AddSurfaceOption(&combined, lhs.value + rhs.value, lhs.cost + rhs.cost);
+    }
+  }
+  std::sort(combined.begin(), combined.end(),
+            [](const SurfaceOption& lhs, const SurfaceOption& rhs) {
+              if (lhs.cost != rhs.cost) return lhs.cost < rhs.cost;
+              return lhs.value < rhs.value;
+            });
+  if (combined.size() > kBoundaryRepairLimit) {
+    combined.resize(kBoundaryRepairLimit);
+  }
+  return combined;
+}
+
+std::string SegmentTopSurface(const converter::Segment& segment) {
+  if (segment.candidates_size() > 0) {
+    return std::string(segment.candidate(0).value);
+  }
+  return std::string(segment.key());
+}
+
+std::string CurrentSurface(const Segments& segments) {
+  std::string surface;
+  for (const converter::Segment& segment : segments.conversion_segments()) {
+    surface.append(SegmentTopSurface(segment));
+  }
+  return surface;
+}
+
+std::string FullReading(const Segments& segments) {
+  std::string reading;
+  for (const converter::Segment& segment : segments.conversion_segments()) {
+    reading.append(segment.key().data(), segment.key().size());
+  }
+  return reading;
+}
+
+std::vector<std::string> RepairValues(
+    const std::vector<SurfaceOption>& options, absl::string_view baseline,
+    const std::vector<SurfaceOption>* blocked = nullptr) {
+  std::vector<std::string> values;
+  for (const SurfaceOption& option : options) {
+    if (option.value == baseline) continue;
+    if (blocked != nullptr && ContainsSurface(*blocked, option.value)) continue;
+    if (std::find(values.begin(), values.end(), option.value) != values.end()) {
+      continue;
+    }
+    values.push_back(option.value);
+    if (values.size() >= kBoundaryRepairLimit) break;
+  }
+  return values;
+}
+
+bool BoundaryRepairWins(const ai_ranker::Client& client,
+                        const ConversionRequest& request,
+                        const Segments& segments, const std::string& reading,
+                        const std::string& baseline,
+                        const std::vector<std::string>& repairs) {
+  if (baseline.empty() || repairs.empty()) return false;
+
+  std::vector<ai_ranker::CandidateInput> candidates;
+  candidates.reserve(repairs.size() + 1);
+  candidates.push_back({"baseline", baseline, 1});
+  for (size_t i = 0; i < repairs.size(); ++i) {
+    candidates.push_back({"repair" + std::to_string(i), repairs[i],
+                          static_cast<int>(i + 2)});
+  }
+
+  std::string preceding_text(request.context().preceding_text());
+  if (preceding_text.empty()) preceding_text = segments.history_value();
+  const std::string following_text(request.context().following_text());
+
+  std::vector<ai_ranker::RankedCandidate> ranked;
+  if (!client.Rank(preceding_text, following_text, reading, candidates,
+                   kBoundaryProbeTimeoutMs, &ranked) ||
+      ranked.size() != candidates.size() || ranked.empty()) {
+    return false;
+  }
+
+  const auto baseline_it =
+      std::find_if(ranked.begin(), ranked.end(), [](const auto& item) {
+        return item.id == "baseline";
+      });
+  if (baseline_it == ranked.end() ||
+      ranked.front().id.rfind("repair", 0) != 0) {
+    return false;
+  }
+  return ranked.front().score - baseline_it->score >= kBoundaryRepairMargin;
 }
 
 bool ApplyPermutation(converter::Segment* segment,
@@ -126,7 +289,9 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return std::nullopt;
   }
   const size_t count = segments.conversion_segments_size();
-  if (count == 0 || count > 4) return std::nullopt;
+  if (count == 0 || count > 4 || dictionary_ == nullptr) {
+    return std::nullopt;
+  }
 
   ai_ranker::Client client(pipe_name_);
   if (!client.IsAvailable(25)) return std::nullopt;
@@ -134,13 +299,9 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
   constexpr size_t kMinCompoundChars = 4;
   constexpr size_t kMaxCompoundChars = 12;
 
-  // Mozc sometimes collapses a phrase into one segment with only a handful of
-  // compound candidates (e.g. 飛行少年), hiding a better combination of
-  // ordinary dictionary words (非行 + 少年).  Recover a boundary only when
-  // there is exactly one split whose two sides are dictionary keys.
   if (count == 1) {
     const converter::Segment& segment = segments.conversion_segment(0);
-    if (dictionary_ == nullptr || !IsRerankableSegment(segment) ||
+    if (!IsRerankableSegment(segment) || segment.candidates_size() == 0 ||
         segment.candidates_size() > 4) {
       return std::nullopt;
     }
@@ -163,6 +324,24 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     }
     if (valid_splits != 1) return std::nullopt;
 
+    const absl::string_view left_key = Util::Utf8SubString(key, 0, split_chars);
+    const absl::string_view right_key =
+        Util::Utf8SubString(key, split_chars, key_chars - split_chars);
+    const std::vector<SurfaceOption> split_surfaces =
+        BuildSplitSurfaces(dictionary_, left_key, right_key);
+    std::vector<std::string> repairs;
+    const std::string baseline = SegmentTopSurface(segment);
+    for (const SurfaceOption& option : split_surfaces) {
+      if (option.value == baseline || SegmentContainsSurface(segment, option.value)) {
+        continue;
+      }
+      repairs.push_back(option.value);
+      if (repairs.size() >= kBoundaryRepairLimit) break;
+    }
+    if (!BoundaryRepairWins(client, request, segments, key, baseline, repairs)) {
+      return std::nullopt;
+    }
+
     ResizeSegmentsRequest resize_request = {
         .segment_index = 0,
         .segment_sizes = {
@@ -172,16 +351,12 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return resize_request;
   }
 
-  // Multi-segment repair is deliberately limited to two lexical pieces.
-  // Merging three or four ordinary phrase segments made grammatical text such
-  // as 「私が / する / こと」 behave like one compound and prevented normal
-  // segment-by-segment conversion.  The two-part cases needed for v2 remain:
-  // 主戦 + 率 can be merged, while 飛行 + 少年 can have its boundary locked.
   if (count != 2) return std::nullopt;
 
   size_t total_key_chars = 0;
   for (const converter::Segment& segment : segments.conversion_segments()) {
-    if (segment.segment_type() != converter::Segment::FREE) {
+    if (segment.segment_type() != converter::Segment::FREE ||
+        segment.candidates_size() == 0) {
       return std::nullopt;
     }
     total_key_chars += segment.key_len();
@@ -192,23 +367,45 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
 
   const converter::Segment& first = segments.conversion_segment(0);
   const converter::Segment& second = segments.conversion_segment(1);
+  const std::string reading = FullReading(segments);
+  const std::string baseline = CurrentSurface(segments);
   ResizeSegmentsRequest resize_request = {.segment_index = 0};
 
   if (second.key_len() <= 2) {
-    // Only lexical-looking two-part compounds may be merged.  Short function
-    // words such as こと/もの/する are kept under Mozc's normal segmentation.
     if (total_key_chars < kMinCompoundChars || IsGrammarLikeKey(first.key()) ||
         IsGrammarLikeKey(second.key())) {
       return std::nullopt;
     }
+    const std::vector<SurfaceOption> whole_surfaces =
+        LookupExactSurfaces(dictionary_, reading, kBoundaryRepairLimit);
+    const std::vector<std::string> repairs =
+        RepairValues(whole_surfaces, baseline);
+    if (!BoundaryRepairWins(client, request, segments, reading, baseline,
+                            repairs)) {
+      return std::nullopt;
+    }
     resize_request.segment_sizes[0] =
         static_cast<uint8_t>(total_key_chars);
-  } else {
-    // Preserve a useful lexical boundary such as 飛行 + 少年 so that a later
-    // collocation rewriter cannot collapse it back into 飛行少年.
-    resize_request.segment_sizes[0] = static_cast<uint8_t>(first.key_len());
-    resize_request.segment_sizes[1] = static_cast<uint8_t>(second.key_len());
+    return resize_request;
   }
+
+  // Lock an existing two-word boundary only when it exposes a whole-surface
+  // reading that the unsegmented dictionary path does not offer and the AI
+  // clearly prefers that split-only path.  This is the transactional version
+  // of the old 飛行 + 少年 protection: no confident repair, no boundary change.
+  const std::vector<SurfaceOption> whole_surfaces =
+      LookupExactSurfaces(dictionary_, reading, kBoundaryRepairLimit);
+  if (whole_surfaces.empty()) return std::nullopt;
+  const std::vector<SurfaceOption> split_surfaces =
+      BuildSplitSurfaces(dictionary_, first.key(), second.key());
+  const std::vector<std::string> repairs =
+      RepairValues(split_surfaces, baseline, &whole_surfaces);
+  if (!BoundaryRepairWins(client, request, segments, reading, baseline,
+                          repairs)) {
+    return std::nullopt;
+  }
+  resize_request.segment_sizes[0] = static_cast<uint8_t>(first.key_len());
+  resize_request.segment_sizes[1] = static_cast<uint8_t>(second.key_len());
   return resize_request;
 }
 
