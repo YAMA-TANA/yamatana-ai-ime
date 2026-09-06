@@ -1,3 +1,8 @@
+const promoStyles = document.createElement('link');
+promoStyles.rel = 'stylesheet';
+promoStyles.href = '/yamatana-ai-ime/promo.css?v=20260906-3';
+document.head.appendChild(promoStyles);
+
 const examples = {
   distance: {
     sentence: 'レーザーで壁までの距離を<span>はかった</span>。',
