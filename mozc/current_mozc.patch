@@ -112,10 +112,10 @@ index 17723c3b..0b846900 100644
          "//protocol:renderer_cc_proto",
          "@com_google_absl//absl/log",
 diff --git a/src/rewriter/BUILD.bazel b/src/rewriter/BUILD.bazel
-index 08eed905..5bfdfd94 100644
+index 08eed905..26d5c778 100644
 --- a/src/rewriter/BUILD.bazel
 +++ b/src/rewriter/BUILD.bazel
-@@ -71,6 +71,46 @@ mozc_cc_test(
+@@ -71,6 +71,49 @@ mozc_cc_test(
      ],
  )
  
@@ -138,8 +138,10 @@ index 08eed905..5bfdfd94 100644
 +    deps = [
 +        ":ai_ranker_client",
 +        ":rewriter_interface",
++        "//base:util",
 +        "//converter:attribute",
 +        "//converter:segments",
++        "//dictionary:dictionary_interface",
 +        "//request:conversion_request",
 +    ],
 +    alwayslink = 1,
@@ -153,6 +155,7 @@ index 08eed905..5bfdfd94 100644
 +        ":ai_rewriter",
 +        ":rewriter_interface",
 +        "//converter:segments",
++        "//dictionary:dictionary_interface",
 +        "//protocol:commands_cc_proto",
 +        "//request:conversion_request",
 +        "//testing:gunit_main",
@@ -162,7 +165,7 @@ index 08eed905..5bfdfd94 100644
  mozc_cc_library(
      name = "collocation_rewriter",
      srcs = [
-@@ -1520,6 +1560,7 @@ mozc_cc_library(
+@@ -1520,6 +1563,7 @@ mozc_cc_library(
      ],
      deps = [
          ":a11y_description_rewriter",
@@ -172,10 +175,10 @@ index 08eed905..5bfdfd94 100644
          ":command_rewriter",
 diff --git a/src/rewriter/ai_ranker_client.cc b/src/rewriter/ai_ranker_client.cc
 new file mode 100644
-index 00000000..1e16f87a
+index 00000000..b8d2f7cf
 --- /dev/null
 +++ b/src/rewriter/ai_ranker_client.cc
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,330 @@
 +#include "rewriter/ai_ranker_client.h"
 +
 +#ifdef _WIN32
@@ -195,8 +198,9 @@ index 00000000..1e16f87a
 +namespace ai_ranker {
 +namespace {
 +
-+constexpr size_t kMaxResponseBytes = 65536;
-+constexpr size_t kMaxRequestBytes = 262144;
++constexpr size_t kMaxResponseBytes = 262144;
++constexpr size_t kMaxRequestBytes = 2097152;
++constexpr size_t kMaxCandidates = 512;
 +
 +bool EscapeJson(const std::string& value, std::string* out) {
 +  if (out == nullptr) return false;
@@ -423,7 +427,8 @@ index 00000000..1e16f87a
 +                  const std::vector<CandidateInput>& candidates,
 +                  int timeout_ms,
 +                  std::vector<RankedCandidate>* ranked) const {
-+  if (ranked == nullptr || candidates.empty() || candidates.size() > 100 ||
++  if (ranked == nullptr || candidates.empty() ||
++      candidates.size() > kMaxCandidates ||
 +      timeout_ms <= 0 || preceding_text.size() > 32768 ||
 +      following_text.size() > 32768 || reading.size() > 512) {
 +    return false;
@@ -602,10 +607,10 @@ index 00000000..8031e03c
 +}
 diff --git a/src/rewriter/ai_rewriter.cc b/src/rewriter/ai_rewriter.cc
 new file mode 100644
-index 00000000..e4891a8c
+index 00000000..0d903e89
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter.cc
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,320 @@
 +#include "rewriter/ai_rewriter.h"
 +
 +#include <algorithm>
@@ -616,15 +621,21 @@ index 00000000..e4891a8c
 +#include <utility>
 +#include <vector>
 +
++#include "base/util.h"
 +#include "converter/attribute.h"
 +#include "converter/candidate.h"
 +#include "converter/segments.h"
++#include "dictionary/dictionary_interface.h"
 +#include "rewriter/ai_ranker_client.h"
 +
 +namespace mozc {
 +
 +AiRewriter::AiRewriter(std::wstring pipe_name)
-+    : pipe_name_(std::move(pipe_name)) {}
++    : AiRewriter(nullptr, std::move(pipe_name)) {}
++
++AiRewriter::AiRewriter(const dictionary::DictionaryInterface* dictionary,
++                       std::wstring pipe_name)
++    : dictionary_(dictionary), pipe_name_(std::move(pipe_name)) {}
 +
 +namespace {
 +
@@ -724,17 +735,61 @@ index 00000000..e4891a8c
 +    return std::nullopt;
 +  }
 +  const size_t count = segments.conversion_segments_size();
-+  if (count < 2 || count > 4) return std::nullopt;
++  if (count == 0 || count > 4) return std::nullopt;
++
++  ai_ranker::Client client(pipe_name_);
++  if (!client.IsAvailable(25)) return std::nullopt;
++
++  constexpr size_t kMinCompoundChars = 4;
++  constexpr size_t kMaxCompoundChars = 12;
++
++  // Mozc sometimes collapses a phrase into one segment with only a handful of
++  // compound candidates (e.g. 飛行少年), hiding a better combination of
++  // ordinary dictionary words (非行 + 少年).  Recover a boundary only when
++  // there is exactly one split whose two sides are dictionary keys.  Requiring
++  // two or more characters on each side avoids destabilizing short words and
++  // inflections.  The recursive conversion then supplies real Mozc candidates
++  // for both sides; AiRewriter still only reorders those candidates.
++  if (count == 1) {
++    const converter::Segment& segment = segments.conversion_segment(0);
++    if (dictionary_ == nullptr || !IsRerankableSegment(segment) ||
++        segment.candidates_size() > 4) {
++      return std::nullopt;
++    }
++    const std::string key(segment.key());
++    const size_t key_chars = Util::CharsLen(key);
++    if (key_chars < kMinCompoundChars || key_chars > kMaxCompoundChars) {
++      return std::nullopt;
++    }
++
++    size_t split_chars = 0;
++    size_t valid_splits = 0;
++    for (size_t split = 2; split + 2 <= key_chars; ++split) {
++      const absl::string_view prefix = Util::Utf8SubString(key, 0, split);
++      const absl::string_view suffix =
++          Util::Utf8SubString(key, split, key_chars - split);
++      if (dictionary_->HasKey(prefix) && dictionary_->HasKey(suffix)) {
++        split_chars = split;
++        ++valid_splits;
++      }
++    }
++    if (valid_splits != 1) return std::nullopt;
++
++    ResizeSegmentsRequest resize_request = {
++        .segment_index = 0,
++        .segment_sizes = {
++            static_cast<uint8_t>(split_chars),
++            static_cast<uint8_t>(key_chars - split_chars), 0, 0, 0, 0, 0, 0},
++    };
++    return resize_request;
++  }
 +
 +  // A compound word may be split so that the intended surface form does not
 +  // exist in any individual segment (e.g. 主戦 + 率 instead of 主旋律).
-+  // When local context and the AI server are available, ask Mozc to generate
-+  // its normal candidates once more with a single short boundary.  AiRewriter
-+  // can then rank the real dictionary candidate without generating text.
-+  if (request.context().preceding_text().empty() &&
-+      segments.history_value().empty()) {
-+    return std::nullopt;
-+  }
++  // Ask Mozc to generate its normal candidates once more with a single short
++  // boundary.  AiRewriter can then rank the real dictionary candidate without
++  // generating text.  A resized compound is useful even without surrounding
++  // text because the candidate's whole-word naturalness is itself evidence.
 +  size_t total_key_chars = 0;
 +  for (const converter::Segment& segment : segments.conversion_segments()) {
 +    if (segment.segment_type() != converter::Segment::FREE) {
@@ -742,18 +797,24 @@ index 00000000..e4891a8c
 +    }
 +    total_key_chars += segment.key_len();
 +  }
-+  constexpr size_t kMaxCompoundChars = 12;
 +  if (total_key_chars < 2 || total_key_chars > kMaxCompoundChars) {
 +    return std::nullopt;
 +  }
-+  ai_ranker::Client client(pipe_name_);
-+  if (!client.IsAvailable(25)) return std::nullopt;
 +
-+  ResizeSegmentsRequest resize_request = {
-+      .segment_index = 0,
-+      .segment_sizes = {static_cast<uint8_t>(total_key_chars), 0, 0, 0, 0, 0,
-+                        0, 0},
-+  };
++  // A short trailing segment is usually an affix-like piece whose intended
++  // spelling may only exist as a whole-word candidate (主戦 + 率 -> 主旋律),
++  // so merge it.  Otherwise lock Mozc's useful word boundary before a later
++  // collocation rewriter can collapse it (非行 + 少年 -> 飛行少年).
++  ResizeSegmentsRequest resize_request = {.segment_index = 0};
++  if (segments.conversion_segment(count - 1).key_len() <= 2) {
++    resize_request.segment_sizes[0] =
++        static_cast<uint8_t>(total_key_chars);
++  } else {
++    for (size_t i = 0; i < count; ++i) {
++      resize_request.segment_sizes[i] = static_cast<uint8_t>(
++          segments.conversion_segment(i).key_len());
++    }
++  }
 +  return resize_request;
 +}
 +
@@ -777,10 +838,10 @@ index 00000000..e4891a8c
 +  if (preceding_text.empty()) {
 +    preceding_text = segments->history_value();
 +  }
-+  // With no preceding text there is no context to disambiguate homophones.
-+  // Preserve Mozc's well-tuned dictionary order instead of asking the model
-+  // to make a context-free guess.
-+  if (preceding_text.empty()) {
++  // Ordinary context-free single words keep Mozc's order.  A resized compound
++  // is different: either its whole-word candidates or its neighboring
++  // segments provide enough lexical context to repair a collapsed boundary.
++  if (preceding_text.empty() && !segments->resized()) {
 +    return false;
 +  }
 +
@@ -816,11 +877,10 @@ index 00000000..e4891a8c
 +      continue;
 +    }
 +
-+    // The useful homophone candidates are concentrated near the top of
-+    // Mozc's list.  Eight candidates cover more than the visible first page
-+    // while keeping explicit Space-key inference responsive on CPU.
-+    const size_t limit =
-+        std::min<size_t>(8, segment->candidates_size());
++    // Score every candidate Mozc produced.  The 70M runtime sends the complete
++    // candidate list through one batched forward pass, so lower-ranked but
++    // contextually correct words are not hidden by an arbitrary top-N cutoff.
++    const size_t limit = segment->candidates_size();
 +    std::vector<ai_ranker::CandidateInput> input;
 +    input.reserve(limit);
 +    for (size_t i = 0; i < limit; ++i) {
@@ -873,10 +933,10 @@ index 00000000..e4891a8c
 +}  // namespace mozc
 diff --git a/src/rewriter/ai_rewriter.h b/src/rewriter/ai_rewriter.h
 new file mode 100644
-index 00000000..1e823f8b
+index 00000000..129e3279
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,38 @@
 +#ifndef MOZC_REWRITER_AI_REWRITER_H_
 +#define MOZC_REWRITER_AI_REWRITER_H_
 +
@@ -886,11 +946,18 @@ index 00000000..1e823f8b
 +
 +namespace mozc {
 +
++namespace dictionary {
++class DictionaryInterface;
++}  // namespace dictionary
++
 +// Reorders only the candidates already generated by Mozc.  The ranker is
 +// optional: any failure leaves |segments| untouched and returns false.
 +class AiRewriter final : public RewriterInterface {
 + public:
 +  explicit AiRewriter(
++      std::wstring pipe_name = L"\\\\.\\pipe\\ai_ime_ranker");
++  AiRewriter(
++      const dictionary::DictionaryInterface* dictionary,
 +      std::wstring pipe_name = L"\\\\.\\pipe\\ai_ime_ranker");
 +
 +  int capability(const ConversionRequest& request) const override;
@@ -901,6 +968,7 @@ index 00000000..1e823f8b
 +               Segments* segments) const override;
 +
 + private:
++  const dictionary::DictionaryInterface* dictionary_;
 +  std::wstring pipe_name_;
 +};
 +
@@ -909,10 +977,10 @@ index 00000000..1e823f8b
 +#endif  // MOZC_REWRITER_AI_REWRITER_H_
 diff --git a/src/rewriter/ai_rewriter_test.cc b/src/rewriter/ai_rewriter_test.cc
 new file mode 100644
-index 00000000..d349374e
+index 00000000..3a424e23
 --- /dev/null
 +++ b/src/rewriter/ai_rewriter_test.cc
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,208 @@
 +#include "rewriter/ai_rewriter.h"
 +
 +#include <utility>
@@ -923,12 +991,24 @@ index 00000000..d349374e
 +
 +#include "converter/candidate.h"
 +#include "converter/segments.h"
++#include "dictionary/dictionary_interface.h"
 +#include "protocol/commands.pb.h"
 +#include "request/conversion_request.h"
 +#include "rewriter/rewriter_interface.h"
 +#include "testing/gunit.h"
 +
 +namespace mozc {
++
++namespace {
++
++class CompoundDictionary final : public dictionary::DictionaryInterface {
++ public:
++  bool HasKey(absl::string_view key) const override {
++    return key == "ひこう" || key == "しょうねん";
++  }
++};
++
++}  // namespace
 +
 +TEST(AiRewriterTest, CapabilityIsConversionOnly) {
 +  AiRewriter rewriter(L"missing-ai-ime-pipe");
@@ -1007,6 +1087,64 @@ index 00000000..d349374e
 +    EXPECT_EQ(resize->segment_sizes[i], 0);
 +  }
 +}
++
++TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
++  const std::wstring pipe_name =
++      L"\\\\.\\pipe\\yamatana_ai_rewriter_preserve_test";
++  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
++                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
++                                 1, 4096, 4096, 0, nullptr);
++  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
++
++  Segments segments;
++  Segment* first = segments.add_segment();
++  first->set_key("ひこう");
++  first->add_candidate()->value = "飛行";
++  Segment* second = segments.add_segment();
++  second->set_key("しょうねん");
++  second->add_candidate()->value = "少年";
++
++  const ConversionRequest request;
++  AiRewriter rewriter(pipe_name);
++  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
++  CloseHandle(pipe);
++
++  ASSERT_TRUE(resize.has_value());
++  EXPECT_EQ(resize->segment_index, 0);
++  EXPECT_EQ(resize->segment_sizes[0], 3);
++  EXPECT_EQ(resize->segment_sizes[1], 5);
++}
++
++TEST(AiRewriterTest, AvailableRankerRestoresUniqueCompoundBoundary) {
++  const std::wstring pipe_name =
++      L"\\\\.\\pipe\\yamatana_ai_rewriter_split_test";
++  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
++                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
++                                 1, 4096, 4096, 0, nullptr);
++  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
++
++  Segments segments;
++  Segment* segment = segments.add_segment();
++  segment->set_segment_type(converter::Segment::FIXED_BOUNDARY);
++  segment->set_key("ひこうしょうねん");
++  segment->add_candidate()->value = "飛行少年";
++  segment->add_candidate()->value = "ひこうしょうねん";
++  segment->add_candidate()->value = "ヒコウショウネン";
++
++  CompoundDictionary dictionary;
++  const ConversionRequest request;
++  AiRewriter rewriter(&dictionary, pipe_name);
++  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
++  CloseHandle(pipe);
++
++  ASSERT_TRUE(resize.has_value());
++  EXPECT_EQ(resize->segment_index, 0);
++  EXPECT_EQ(resize->segment_sizes[0], 3);
++  EXPECT_EQ(resize->segment_sizes[1], 5);
++  for (size_t i = 2; i < resize->segment_sizes.size(); ++i) {
++    EXPECT_EQ(resize->segment_sizes[i], 0);
++  }
++}
 +#endif
 +
 +TEST(AiRewriterTest, NoContextPreservesMozcOrder) {
@@ -1052,7 +1190,7 @@ index 00000000..d349374e
 +
 +}  // namespace mozc
 diff --git a/src/rewriter/rewriter.cc b/src/rewriter/rewriter.cc
-index d92e814f..eaee4785 100644
+index d92e814f..d380de4a 100644
 --- a/src/rewriter/rewriter.cc
 +++ b/src/rewriter/rewriter.cc
 @@ -40,6 +40,7 @@
@@ -1063,16 +1201,16 @@ index d92e814f..eaee4785 100644
  #include "rewriter/calculator_rewriter.h"
  #include "rewriter/collocation_rewriter.h"
  #include "rewriter/correction_rewriter.h"
-@@ -197,6 +198,9 @@ Rewriter::Rewriter(const engine::Modules& modules) {
-   AddRewriter(std::make_unique<RemoveRedundantCandidateRewriter>());
-   AddRewriter(make_unique_from_tuples<A11yDescriptionRewriter>(
-       data_manager.GetA11yDescriptionRewriterData()));
-+  // Optional external context ranking.  AiRewriter returns false and leaves
-+  // candidates untouched whenever the ranker is unavailable or invalid.
-+  AddRewriter(std::make_unique<AiRewriter>());
- }
- 
- }  // namespace mozc
+@@ -147,6 +148,9 @@ Rewriter::Rewriter(const engine::Modules& modules) {
+   AddRewriter(std::make_unique<EnglishVariantsRewriter>(pos_matcher));
+   AddRewriter(make_unique_from_tuples<NumberRewriter>(
+       data_manager.GetCounterSuffixSortedArray(), pos_matcher));
++  // Plan or preserve word boundaries before CollocationRewriter can collapse
++  // a phrase and hide useful per-word homophones from the AI ranker.
++  AddRewriter(std::make_unique<AiRewriter>(&dictionary));
+   AddRewriter(apply_from_tuples(CollocationRewriter::Create, pos_matcher,
+                                 data_manager.GetCollocationData()));
+   AddRewriter(std::make_unique<SingleKanjiRewriter>(pos_matcher,
 diff --git a/src/server/mozc_server.cc b/src/server/mozc_server.cc
 index eda5d517..41e3f507 100644
 --- a/src/server/mozc_server.cc

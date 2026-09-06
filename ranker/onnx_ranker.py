@@ -69,18 +69,24 @@ class OnnxRuriReranker:
             resolved_model = Path(model_path)
         elif use_gpu:
             resolved_model = _resolve_first((
+                "build/onnx-model-70m/ruri-ime-fp16.onnx",
                 "models/onnx/ruri-ime-fp16.onnx",
+                "build/onnx-model/ruri-ime-fp16.onnx",
                 "models/onnx/ruri-ime-fp32.onnx",
             ))
         else:
             resolved_model = _resolve_first((
+                "build/onnx-model-70m/ruri-ime-int8.onnx",
                 "models/onnx/ruri-ime-int8.onnx",
+                "build/onnx-model/ruri-ime-int8.onnx",
                 "models/onnx/ruri-ime-fp32.onnx",
             ))
         if not resolved_model or not resolved_model.exists():
             raise FileNotFoundError("配布用ONNXモデルが見つかりません。再インストールしてください。")
         tokenizer_path = _resolve_first((
+            "build/onnx-model-70m/tokenizer.json",
             "models/onnx/tokenizer.json",
+            "models/ruri-v3-70m-ime-distilled/tokenizer.json",
             "models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json",
         ))
         if tokenizer_path is None:
@@ -123,10 +129,10 @@ class OnnxRuriReranker:
         }
 
     def _warmup(self) -> None:
-        # DirectML compiles graphs lazily for new batch shapes.  Warm the exact
-        # eight-candidate batch used by Mozc so the user's first conversion
-        # does not pay that one-time cost.
-        warmup_count = 8
+        # Warm a representative full Mozc candidate page.  Production keeps a
+        # variable batch so every candidate is evaluated in the same forward
+        # pass instead of truncating or issuing per-candidate model calls.
+        warmup_count = 32
         query = "文書方針: 一般的な日本語文書。\n文脈に合う表記を選びなさい。"
         inputs = self._encode(
             [query] * warmup_count,
@@ -152,26 +158,28 @@ class OnnxRuriReranker:
             suffix = suffix[: self.context_chars]
 
         all_candidates = []
-        unique_words: list[str] = []
-        word_indexes: dict[str, int] = {}
         for index, candidate in enumerate(candidates):
             word = str(candidate.get("text", candidate.get("word", "")))
             candidate_id = str(candidate.get("id", f"c{index + 1}"))
             all_candidates.append((index, candidate_id, word))
-            if word not in word_indexes:
-                word_indexes[word] = len(unique_words)
-                unique_words.append(word)
 
         query = (
             f"文書方針: {self.document_instruction}\n"
             f"文脈「{prefix}____{suffix}」に最も適切な表記を選びなさい。"
         )
-        inputs = self._encode([query] * len(unique_words), [f"{prefix}{word}{suffix}" for word in unique_words])
+        # One encode batch and one session.run for the complete Mozc candidate
+        # list, including duplicate surface forms with distinct candidate IDs.
+        # Keeping duplicates in the tensor makes this contract observable and
+        # prevents hidden per-item inference paths from creeping back in.
+        inputs = self._encode(
+            [query] * len(all_candidates),
+            [f"{prefix}{word}{suffix}" for _index, _candidate_id, word in all_candidates],
+        )
         logits = np.asarray(self.session.run(["logits"], inputs)[0]).reshape(-1)
 
         scored = []
         for original_index, candidate_id, word in all_candidates:
-            raw_score = float(logits[word_indexes[word]])
+            raw_score = float(logits[original_index])
             lexical_penalty = (
                 self.lexicon.compute_lexical_penalty(word, reading)
                 if self.lexicon and reading

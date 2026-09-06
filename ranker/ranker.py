@@ -132,6 +132,7 @@ class RuntimeStatus:
             "last_promoted_from_rank": None,
             "last_context_chars": None,
             "last_read_chars": None,
+            "last_candidate_count": None,
             "last_request_at": None,
             "last_latency_ms": None,
         }
@@ -280,10 +281,14 @@ def process_line(line: bytes, ranker: Any) -> Optional[bytes]:
             raise ProtocolError("JSON line is too large")
         request = loads_strict(line.decode("utf-8"))
         req_val = validate_request(request)
-        if not req_val["preceding_text"]:
-            # Context-free ranking has no information with which to improve
-            # Mozc's dictionary order.  Keep the original order and avoid an
-            # unnecessary model invocation, including for legacy clients.
+        if (not req_val["preceding_text"] and
+                not req_val["following_text"] and
+                req_val["inference_trigger"] != "explicit"):
+            # A legacy context-free interactive request has no information
+            # with which to improve Mozc's dictionary order.  Explicit Mozc
+            # conversion is allowed through because a resized compound can
+            # still be judged by whole-word naturalness, and a restored split
+            # supplies neighboring segments as prefix/suffix context.
             response = {
                 "request_id": req_val["request_id"],
                 "candidates": [
@@ -395,7 +400,7 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
                 continue
             data = bytearray()
             try:
-                while len(data) < 262144:
+                while len(data) < MAX_LINE_BYTES:
                     buf = ctypes.create_string_buffer(4096)
                     read = ctypes.c_uint32()
                     ok = k32.ReadFile(handle, buf, len(buf), ctypes.byref(read), None)
@@ -452,6 +457,7 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
                                     last_promoted_from_rank=promoted_from,
                                     last_context_chars=len(str(observed.get("preceding_text", ""))),
                                     last_read_chars=len(str(observed.get("read", ""))),
+                                    last_candidate_count=len(observed.get("candidates", [])),
                                 )
                                 LOG.info(
                                     "IME reorder changed=%s top_from=%s context_chars=%s read_chars=%s",

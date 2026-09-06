@@ -90,8 +90,10 @@ mozc_cc_library(
     deps = [
         ":ai_ranker_client",
         ":rewriter_interface",
+        "//base:util",
         "//converter:attribute",
         "//converter:segments",
+        "//dictionary:dictionary_interface",
         "//request:conversion_request",
     ],
     alwayslink = 1,
@@ -105,6 +107,7 @@ mozc_cc_test(
         ":ai_rewriter",
         ":rewriter_interface",
         "//converter:segments",
+        "//dictionary:dictionary_interface",
         "//protocol:commands_cc_proto",
         "//request:conversion_request",
         "//testing:gunit_main",

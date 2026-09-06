@@ -148,6 +148,9 @@ Rewriter::Rewriter(const engine::Modules& modules) {
   AddRewriter(std::make_unique<EnglishVariantsRewriter>(pos_matcher));
   AddRewriter(make_unique_from_tuples<NumberRewriter>(
       data_manager.GetCounterSuffixSortedArray(), pos_matcher));
+  // Plan or preserve word boundaries before CollocationRewriter can collapse
+  // a phrase and hide useful per-word homophones from the AI ranker.
+  AddRewriter(std::make_unique<AiRewriter>(&dictionary));
   AddRewriter(apply_from_tuples(CollocationRewriter::Create, pos_matcher,
                                 data_manager.GetCollocationData()));
   AddRewriter(std::make_unique<SingleKanjiRewriter>(pos_matcher,
@@ -198,9 +201,6 @@ Rewriter::Rewriter(const engine::Modules& modules) {
   AddRewriter(std::make_unique<RemoveRedundantCandidateRewriter>());
   AddRewriter(make_unique_from_tuples<A11yDescriptionRewriter>(
       data_manager.GetA11yDescriptionRewriterData()));
-  // Optional external context ranking.  AiRewriter returns false and leaves
-  // candidates untouched whenever the ranker is unavailable or invalid.
-  AddRewriter(std::make_unique<AiRewriter>());
 }
 
 }  // namespace mozc

@@ -1,4 +1,4 @@
-"""Notification-area ON/OFF controller for the LoRA-tuned Mozc AI ranker."""
+"""Notification-area ON/OFF controller for the distilled Mozc AI ranker."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ PRODUCT_DATA_DIR = product_data_dir()
 SETTINGS_FILE = default_settings_path()
 STATUS_FILE = PRODUCT_DATA_DIR / "ai_ime_status.json"
 LOG_DIR = PRODUCT_DATA_DIR / "logs"
-MODEL_LABEL = "Ruri-v3-310M (IME LoRA tuned)"
+MODEL_LABEL = "Ruri-v3-70M (IME distilled)"
 
 
 def make_icon(state: str) -> Image.Image:
@@ -117,7 +117,7 @@ class AIIMETray:
         if self.state == "on":
             return "AIを使用する (ON)"
         if self.state == "loading":
-            return "LoRAモデルを読み込み中…"
+            return "70Mモデルを読み込み中…"
         return "AIを使用する (OFF)"
 
     def _is_checked(self, _item: Any) -> bool:
@@ -180,7 +180,7 @@ class AIIMETray:
         self._settings_signature = settings_runtime_signature(self.settings)
         compute_label = COMPUTE_MODES[self.settings["compute_mode"]]
         self.icon.notify(
-            f"Ruri LoRAモデルを読み込んでいます。\n演算: {compute_label}",
+            f"Ruri 70M蒸留モデルを読み込んでいます。\n演算: {compute_label}",
             PRODUCT_NAME,
         )
 
@@ -220,7 +220,7 @@ class AIIMETray:
                         self._monitor_server()
                         return
                     time.sleep(0.25)
-                raise TimeoutError("LoRAモデルの読み込みが120秒以内に完了しませんでした")
+                raise TimeoutError("70Mモデルの読み込みが120秒以内に完了しませんでした")
             except Exception as exc:
                 self._terminate_owned_server()
                 self._set_state("error", str(exc))
@@ -357,13 +357,15 @@ class AIIMETray:
                 changed = data.get("last_ime_order_changed")
                 promoted = data.get("last_promoted_from_rank")
                 context_chars = data.get("last_context_chars")
+                candidate_count = data.get("last_candidate_count")
                 last_changed = "変更あり" if changed else "変更なし"
                 last = (
                     f"実IME要求: {requests}回 / 順位変更: {reordered}回\n"
                     f"第一候補の変更: {top_changed}回\n"
                     f"最終推論: {latency} ms / {last_changed}"
                     f"（元{promoted}位→1位）\n"
-                    f"直前文脈: {context_chars}文字"
+                    f"直前文脈: {context_chars}文字\n"
+                    f"候補: {candidate_count}件（全候補を1バッチ採点）"
                 )
             message = (
                 "【AI: ON】\n\n"
@@ -373,10 +375,10 @@ class AIIMETray:
                 f"演算: {compute_label}\n"
                 f"{last}\n\n"
                 "入力して変換した後、この画面の実IME要求数が増えれば、\n"
-                "インストール済みMozcからLoRAモデルまで実際に到達しています。"
+                "インストール済みMozcから70Mモデルまで実際に到達しています。"
             )
         elif self.state == "loading":
-            message = "【AI: 読み込み中】\n\nRuri LoRAモデルをGPU/CPUへ読み込んでいます。"
+            message = "【AI: 読み込み中】\n\nRuri 70M蒸留モデルをGPU/CPUへ読み込んでいます。"
         elif self.state == "error":
             message = f"【AI: エラー】\n\n{self.last_error}\n\nログ: {LOG_DIR}"
         else:

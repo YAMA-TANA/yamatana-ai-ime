@@ -8,12 +8,24 @@
 
 #include "converter/candidate.h"
 #include "converter/segments.h"
+#include "dictionary/dictionary_interface.h"
 #include "protocol/commands.pb.h"
 #include "request/conversion_request.h"
 #include "rewriter/rewriter_interface.h"
 #include "testing/gunit.h"
 
 namespace mozc {
+
+namespace {
+
+class CompoundDictionary final : public dictionary::DictionaryInterface {
+ public:
+  bool HasKey(absl::string_view key) const override {
+    return key == "ひこう" || key == "しょうねん";
+  }
+};
+
+}  // namespace
 
 TEST(AiRewriterTest, CapabilityIsConversionOnly) {
   AiRewriter rewriter(L"missing-ai-ime-pipe");
@@ -89,6 +101,64 @@ TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
   EXPECT_EQ(resize->segment_index, 0);
   EXPECT_EQ(resize->segment_sizes[0], 6);
   for (size_t i = 1; i < resize->segment_sizes.size(); ++i) {
+    EXPECT_EQ(resize->segment_sizes[i], 0);
+  }
+}
+
+TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_preserve_test";
+  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 4096, 4096, 0, nullptr);
+  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("ひこう");
+  first->add_candidate()->value = "飛行";
+  Segment* second = segments.add_segment();
+  second->set_key("しょうねん");
+  second->add_candidate()->value = "少年";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
+  CloseHandle(pipe);
+
+  ASSERT_TRUE(resize.has_value());
+  EXPECT_EQ(resize->segment_index, 0);
+  EXPECT_EQ(resize->segment_sizes[0], 3);
+  EXPECT_EQ(resize->segment_sizes[1], 5);
+}
+
+TEST(AiRewriterTest, AvailableRankerRestoresUniqueCompoundBoundary) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_split_test";
+  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 4096, 4096, 0, nullptr);
+  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_segment_type(converter::Segment::FIXED_BOUNDARY);
+  segment->set_key("ひこうしょうねん");
+  segment->add_candidate()->value = "飛行少年";
+  segment->add_candidate()->value = "ひこうしょうねん";
+  segment->add_candidate()->value = "ヒコウショウネン";
+
+  CompoundDictionary dictionary;
+  const ConversionRequest request;
+  AiRewriter rewriter(&dictionary, pipe_name);
+  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
+  CloseHandle(pipe);
+
+  ASSERT_TRUE(resize.has_value());
+  EXPECT_EQ(resize->segment_index, 0);
+  EXPECT_EQ(resize->segment_sizes[0], 3);
+  EXPECT_EQ(resize->segment_sizes[1], 5);
+  for (size_t i = 2; i < resize->segment_sizes.size(); ++i) {
     EXPECT_EQ(resize->segment_sizes[i], 0);
   }
 }

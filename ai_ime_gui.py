@@ -118,7 +118,7 @@ class MozcMiniWidget:
     def _set_ui_on(self) -> None:
         self.is_running = True
         self.is_loading = False
-        self.status_lbl.config(text="● 稼働中 (Ruri-310M / 21.9ms / VRAM: 1.2GB)", fg="#a6e3a1")
+        self.status_lbl.config(text="● 稼働中 (Ruri-70M / 全候補1バッチ)", fg="#a6e3a1")
         self.btn.config(text="⏹ AI IME を無効化する (OFF)", bg="#f38ba8", fg="#11111b", state=tk.NORMAL)
 
     def _on_toggle(self) -> None:
@@ -174,4 +174,3 @@ class MozcMiniWidget:
 
     def run(self) -> None:
         self.root.mainloop()
-

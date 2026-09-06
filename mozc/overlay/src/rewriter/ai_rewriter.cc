@@ -8,15 +8,21 @@
 #include <utility>
 #include <vector>
 
+#include "base/util.h"
 #include "converter/attribute.h"
 #include "converter/candidate.h"
 #include "converter/segments.h"
+#include "dictionary/dictionary_interface.h"
 #include "rewriter/ai_ranker_client.h"
 
 namespace mozc {
 
 AiRewriter::AiRewriter(std::wstring pipe_name)
-    : pipe_name_(std::move(pipe_name)) {}
+    : AiRewriter(nullptr, std::move(pipe_name)) {}
+
+AiRewriter::AiRewriter(const dictionary::DictionaryInterface* dictionary,
+                       std::wstring pipe_name)
+    : dictionary_(dictionary), pipe_name_(std::move(pipe_name)) {}
 
 namespace {
 
@@ -116,17 +122,61 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return std::nullopt;
   }
   const size_t count = segments.conversion_segments_size();
-  if (count < 2 || count > 4) return std::nullopt;
+  if (count == 0 || count > 4) return std::nullopt;
+
+  ai_ranker::Client client(pipe_name_);
+  if (!client.IsAvailable(25)) return std::nullopt;
+
+  constexpr size_t kMinCompoundChars = 4;
+  constexpr size_t kMaxCompoundChars = 12;
+
+  // Mozc sometimes collapses a phrase into one segment with only a handful of
+  // compound candidates (e.g. 飛行少年), hiding a better combination of
+  // ordinary dictionary words (非行 + 少年).  Recover a boundary only when
+  // there is exactly one split whose two sides are dictionary keys.  Requiring
+  // two or more characters on each side avoids destabilizing short words and
+  // inflections.  The recursive conversion then supplies real Mozc candidates
+  // for both sides; AiRewriter still only reorders those candidates.
+  if (count == 1) {
+    const converter::Segment& segment = segments.conversion_segment(0);
+    if (dictionary_ == nullptr || !IsRerankableSegment(segment) ||
+        segment.candidates_size() > 4) {
+      return std::nullopt;
+    }
+    const std::string key(segment.key());
+    const size_t key_chars = Util::CharsLen(key);
+    if (key_chars < kMinCompoundChars || key_chars > kMaxCompoundChars) {
+      return std::nullopt;
+    }
+
+    size_t split_chars = 0;
+    size_t valid_splits = 0;
+    for (size_t split = 2; split + 2 <= key_chars; ++split) {
+      const absl::string_view prefix = Util::Utf8SubString(key, 0, split);
+      const absl::string_view suffix =
+          Util::Utf8SubString(key, split, key_chars - split);
+      if (dictionary_->HasKey(prefix) && dictionary_->HasKey(suffix)) {
+        split_chars = split;
+        ++valid_splits;
+      }
+    }
+    if (valid_splits != 1) return std::nullopt;
+
+    ResizeSegmentsRequest resize_request = {
+        .segment_index = 0,
+        .segment_sizes = {
+            static_cast<uint8_t>(split_chars),
+            static_cast<uint8_t>(key_chars - split_chars), 0, 0, 0, 0, 0, 0},
+    };
+    return resize_request;
+  }
 
   // A compound word may be split so that the intended surface form does not
   // exist in any individual segment (e.g. 主戦 + 率 instead of 主旋律).
-  // When local context and the AI server are available, ask Mozc to generate
-  // its normal candidates once more with a single short boundary.  AiRewriter
-  // can then rank the real dictionary candidate without generating text.
-  if (request.context().preceding_text().empty() &&
-      segments.history_value().empty()) {
-    return std::nullopt;
-  }
+  // Ask Mozc to generate its normal candidates once more with a single short
+  // boundary.  AiRewriter can then rank the real dictionary candidate without
+  // generating text.  A resized compound is useful even without surrounding
+  // text because the candidate's whole-word naturalness is itself evidence.
   size_t total_key_chars = 0;
   for (const converter::Segment& segment : segments.conversion_segments()) {
     if (segment.segment_type() != converter::Segment::FREE) {
@@ -134,18 +184,24 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     }
     total_key_chars += segment.key_len();
   }
-  constexpr size_t kMaxCompoundChars = 12;
   if (total_key_chars < 2 || total_key_chars > kMaxCompoundChars) {
     return std::nullopt;
   }
-  ai_ranker::Client client(pipe_name_);
-  if (!client.IsAvailable(25)) return std::nullopt;
 
-  ResizeSegmentsRequest resize_request = {
-      .segment_index = 0,
-      .segment_sizes = {static_cast<uint8_t>(total_key_chars), 0, 0, 0, 0, 0,
-                        0, 0},
-  };
+  // A short trailing segment is usually an affix-like piece whose intended
+  // spelling may only exist as a whole-word candidate (主戦 + 率 -> 主旋律),
+  // so merge it.  Otherwise lock Mozc's useful word boundary before a later
+  // collocation rewriter can collapse it (非行 + 少年 -> 飛行少年).
+  ResizeSegmentsRequest resize_request = {.segment_index = 0};
+  if (segments.conversion_segment(count - 1).key_len() <= 2) {
+    resize_request.segment_sizes[0] =
+        static_cast<uint8_t>(total_key_chars);
+  } else {
+    for (size_t i = 0; i < count; ++i) {
+      resize_request.segment_sizes[i] = static_cast<uint8_t>(
+          segments.conversion_segment(i).key_len());
+    }
+  }
   return resize_request;
 }
 
@@ -169,10 +225,10 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   if (preceding_text.empty()) {
     preceding_text = segments->history_value();
   }
-  // With no preceding text there is no context to disambiguate homophones.
-  // Preserve Mozc's well-tuned dictionary order instead of asking the model
-  // to make a context-free guess.
-  if (preceding_text.empty()) {
+  // Ordinary context-free single words keep Mozc's order.  A resized compound
+  // is different: either its whole-word candidates or its neighboring
+  // segments provide enough lexical context to repair a collapsed boundary.
+  if (preceding_text.empty() && !segments->resized()) {
     return false;
   }
 
@@ -208,11 +264,10 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
       continue;
     }
 
-    // The useful homophone candidates are concentrated near the top of
-    // Mozc's list.  Eight candidates cover more than the visible first page
-    // while keeping explicit Space-key inference responsive on CPU.
-    const size_t limit =
-        std::min<size_t>(8, segment->candidates_size());
+    // Score every candidate Mozc produced.  The 70M runtime sends the complete
+    // candidate list through one batched forward pass, so lower-ranked but
+    // contextually correct words are not hidden by an arbitrary top-N cutoff.
+    const size_t limit = segment->candidates_size();
     std::vector<ai_ranker::CandidateInput> input;
     input.reserve(limit);
     for (size_t i = 0; i < limit; ++i) {

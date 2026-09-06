@@ -129,6 +129,97 @@ class RankerTests(unittest.TestCase):
             ["c1", "c2", "c3"],
         )
 
+    def test_explicit_suffix_only_request_reaches_model(self):
+        class RecordingRanker:
+            def __init__(self):
+                self.calls = 0
+
+            def rank(self, req):
+                self.calls += 1
+                reversed_candidates = list(reversed(req["candidates"]))
+                return {
+                    "request_id": req["request_id"],
+                    "candidates": [
+                        {"id": item["id"], "score": 10.0 - rank, "rank": rank}
+                        for rank, item in enumerate(reversed_candidates, start=1)
+                    ],
+                }
+
+        ranker = RecordingRanker()
+        req = request("")
+        req["following_text"] = "少年"
+        req["inference_trigger"] = "explicit"
+        output = process_line(
+            (json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"), ranker
+        )
+        self.assertIsNotNone(output)
+        response = loads_strict(output.decode("utf-8"))
+        self.assertEqual(ranker.calls, 1)
+        self.assertEqual(
+            [candidate["id"] for candidate in response["candidates"]],
+            ["c3", "c2", "c1"],
+        )
+
+    def test_onnx_scores_every_candidate_in_one_forward_batch(self):
+        import numpy as np
+        from ranker.onnx_ranker import OnnxRuriReranker
+
+        class Encoding:
+            def __init__(self, index):
+                self.ids = [index + 1]
+                self.attention_mask = [1]
+
+        class CapturingTokenizer:
+            def __init__(self):
+                self.pairs = []
+
+            def encode_batch(self, pairs):
+                self.pairs = list(pairs)
+                return [Encoding(index) for index in range(len(self.pairs))]
+
+        class CountingSession:
+            def __init__(self):
+                self.calls = 0
+                self.batch_sizes = []
+
+            def run(self, _outputs, inputs):
+                self.calls += 1
+                size = int(inputs["input_ids"].shape[0])
+                self.batch_sizes.append(size)
+                return [np.arange(size, dtype=np.float32).reshape(-1, 1)]
+
+        tokenizer = CapturingTokenizer()
+        session = CountingSession()
+        ranker = object.__new__(OnnxRuriReranker)
+        ranker.tokenizer = tokenizer
+        ranker.session = session
+        ranker.context_enabled = True
+        ranker.context_chars = 128
+        ranker.document_instruction = "一般的な日本語文書。"
+        ranker.lexicon = None
+        ranker.prior_w = 0.0
+
+        req = {
+            "request_id": "all-candidates-one-batch",
+            "preceding_text": "この語は",
+            "following_text": "です",
+            "read": "こうほ",
+            "candidates": [
+                {"id": f"c{index}", "text": text, "rank": index + 1}
+                for index, text in enumerate(["候補", "公募", "候補", "後補", "甲保"])
+            ],
+        }
+        response = ranker.rank(req)
+
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(session.batch_sizes, [len(req["candidates"])])
+        self.assertEqual(len(tokenizer.pairs), len(req["candidates"]))
+        self.assertEqual(
+            [document for _query, document in tokenizer.pairs],
+            [f"この語は{item['text']}です" for item in req["candidates"]],
+        )
+        self.assertEqual(response["candidates"][0]["id"], "c4")
+
     @unittest.skipUnless(sys.platform == "win32", "Windows security descriptor")
     def test_pipe_security_descriptor_allows_low_integrity_owner(self):
         attributes, descriptor = _low_integrity_pipe_security()
@@ -173,6 +264,9 @@ class RankerTests(unittest.TestCase):
         self.assertGreater(contextual_candidate_bonus("象は が長い", "鼻"), 90.0)
         self.assertGreater(contextual_candidate_bonus("庭には美しい がある", "花"), 90.0)
         self.assertLess(contextual_candidate_bonus("庭には美しい がある", "鼻"), 10.0)
+        self.assertGreater(contextual_candidate_bonus(" 少年", "非行"), 90.0)
+        self.assertEqual(contextual_candidate_bonus(" 少年", "飛行"), 0.0)
+        self.assertEqual(contextual_candidate_bonus("少年 ", "非行"), 0.0)
 
     def test_acceptance_machine_calculation(self):
         req = {

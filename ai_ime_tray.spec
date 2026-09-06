@@ -34,9 +34,9 @@ def asset(local_path, installed_path):
 block_cipher = None
 
 all_datas = [
-    (asset('build/onnx-model/ruri-ime-fp16.onnx', 'models/onnx/ruri-ime-fp16.onnx'), 'models/onnx'),
-    (asset('build/onnx-model/ruri-ime-int8.onnx', 'models/onnx/ruri-ime-int8.onnx'), 'models/onnx'),
-    (asset('models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json', 'models/onnx/tokenizer.json'), 'models/onnx'),
+    (asset('build/onnx-model-70m/ruri-ime-fp16.onnx', 'models/onnx/ruri-ime-fp16.onnx'), 'models/onnx'),
+    (asset('build/onnx-model-70m/ruri-ime-int8.onnx', 'models/onnx/ruri-ime-int8.onnx'), 'models/onnx'),
+    (asset('models/ruri-v3-70m-ime-distilled/tokenizer.json', 'models/onnx/tokenizer.json'), 'models/onnx'),
     (asset('data/massive_homophone_database.json', 'data/massive_homophone_database.json'), 'data'),
     ('PRIVACY.md', 'documents'),
     ('LICENSE', 'documents'),

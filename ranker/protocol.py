@@ -11,9 +11,9 @@ import json
 import math
 from typing import Any, Dict, List
 
-MAX_CANDIDATES = 100
+MAX_CANDIDATES = 512
 MAX_TEXT_BYTES = 32_768
-MAX_LINE_BYTES = 262_144
+MAX_LINE_BYTES = 2_097_152
 
 
 class ProtocolError(ValueError):

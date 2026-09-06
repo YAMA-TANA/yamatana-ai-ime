@@ -17,8 +17,9 @@ namespace mozc {
 namespace ai_ranker {
 namespace {
 
-constexpr size_t kMaxResponseBytes = 65536;
-constexpr size_t kMaxRequestBytes = 262144;
+constexpr size_t kMaxResponseBytes = 262144;
+constexpr size_t kMaxRequestBytes = 2097152;
+constexpr size_t kMaxCandidates = 512;
 
 bool EscapeJson(const std::string& value, std::string* out) {
   if (out == nullptr) return false;
@@ -245,7 +246,8 @@ bool Client::Rank(const std::string& preceding_text,
                   const std::vector<CandidateInput>& candidates,
                   int timeout_ms,
                   std::vector<RankedCandidate>* ranked) const {
-  if (ranked == nullptr || candidates.empty() || candidates.size() > 100 ||
+  if (ranked == nullptr || candidates.empty() ||
+      candidates.size() > kMaxCandidates ||
       timeout_ms <= 0 || preceding_text.size() > 32768 ||
       following_text.size() > 32768 || reading.size() > 512) {
     return false;

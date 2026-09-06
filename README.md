@@ -2,12 +2,12 @@
 
 Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替えるWindows向け日本語IMEです。文脈、文書分野、ユーザー辞書相当の語彙情報を変換判断に使いながら、入力内容を外部へ送信しません。
 
-> **Beta / 未署名** — `v0.1.4-beta` は検証用の未署名Betaです。Windowsの警告が表示される場合があります。現在はSignPath Foundationによる署名を申請する前段階であり、署名済みであるかのような表示は行いません。
+> **Beta / 未署名** — `v2.0.0-beta` は検証用の未署名Betaです。Windowsの警告が表示される場合があります。現在はSignPath Foundationによる署名を申請する前段階であり、署名済みであるかのような表示は行いません。
 
 ## 特徴
 
 - Mozcベースの通常変換を保ったまま、AI有効時だけ候補を再順位付け
-- Ruri v3 rerankerをIME向けLoRAで調整し、ONNX Runtimeで実行
+- 70M級Ruri v3 student rerankerをIME向けに蒸留し、全候補を1バッチでONNX Runtime実行
 - 入力、前後文脈、カスタム指示、辞書、推論をPC内だけで処理
 - タスクバートレイからAI ON/OFF、文脈保持、文書分野、カスタム指示、CPU/GPU設定を変更
 - AIは初期OFF。トレイは状態切替と設定のため起動しますが、OFF時はAIモデルをロードしません
@@ -19,15 +19,15 @@ Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替�
 - Windows 10 22H2（build 19045）またはWindows 11、x64
 - 8GB RAM以上（16GB推奨）
 - 空き容量 約3GB
-- CPU実行対応。DirectMLランタイムを同梱し、対応GPUがあるPCでは自動的にGPUを優先
+- CPU実行対応（INT8モデル: 67.8MB、DirectML GPU対応: FP16 134MB）。対応GPUがあるPCでは自動的にDirectML GPU推論を優先
 - インストールには管理者権限が必要
 
-詳細は [システム要件](docs/SYSTEM_REQUIREMENTS_JA.md) を参照してください。
+詳細は [システム要件](docs/SYSTEM_REQUIREMENTS_JA.md) および [モデル軽量化・GPU推論技術解説](docs/DISTILLATION_QUANTIZATION_AND_GPU_INFERENCE_JA.md) を参照してください。
 
 ## インストール
 
 1. [Releases](https://github.com/YAMA-TANA/yamatana-ai-ime/releases) から最新の `.msi` と `SHA256SUMS.txt` をダウンロードします。
-2. PowerShellで `Get-FileHash .\Yamatana-AI-IME-MOZC-Ver-0.1.4-beta-x64.msi -Algorithm SHA256` を実行し、公開ハッシュと一致することを確認します。
+2. PowerShellで `Get-FileHash .\Yamatana-AI-IME-MOZC-Ver-2.0.0-beta-x64.msi -Algorithm SHA256` を実行し、公開ハッシュと一致することを確認します。
 3. MSIをダブルクリックし、プライバシー説明を確認してインストールします。
 4. サインアウトまたは再起動後、`Win + Space` で **Yamatana AI IME (MOZC Ver)** を選択します。
 5. 通知領域のYamatanaアイコンを開き、必要なときだけ **AIをON** にします。初期状態はOFFです。アイコンが隠れている場合は、タスクバーの `^` を開いてください。

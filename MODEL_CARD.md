@@ -2,18 +2,27 @@
 
 ## Summary
 
-Yamatana AI IMEの変換候補再順位付け用モデルです。`cl-nagoya/ruri-v3-reranker-310m` を基礎に、IMEの正例・負例ペアでLoRA fine-tuningし、重みをmergeした後にONNXへ変換しています。文章生成には使用せず、Mozcが提示した候補へスコアを付けます。
+Yamatana AI IME v2の変換候補再順位付け用モデルです。`cl-nagoya/ruri-v3-70m` を310MのIME向けteacherから蒸留し、ONNXへ変換しています。文章生成には使用せず、Mozcが提示した全候補を1回のバッチforwardで採点します。
 
 ## Version and provenance
 
+### 1. Standard Distilled Model (Recommended: 70M Series)
+- Bundle version: `v2.0.0-beta-70m`
+- Student model: `cl-nagoya/ruri-v3-70m` (ModernBERT architecture, 70.1M parameters, 22.3% size of teacher)
+- Distillation: Margin-MSE + Soft KL + Hard Margin compound distillation from 310M teacher
+- Fine-tuning data: 38,355 contextual pairs (including cultural agency homophone verbs and IT inference/implementation contexts)
+- Export: ONNX opset 18
+- CPU artifact: Dynamic INT8 (`ruri-ime-int8.onnx`, **67.76 MB**)
+- GPU artifact: DirectML FP16 (`ruri-ime-fp16.onnx`, **134.11 MB**)
+- Validation agreement with teacher: **99.85%** (Task val acc: 99.75%)
+
+### 2. High-Capacity Model (310M Series)
 - Bundle version: `v0.1.0`
-- Base model: `cl-nagoya/ruri-v3-reranker-310m`
-- Base revision: `bb46934ee9ed09f850b9fcff17501b3ef7ddb2b3`
-- Base license: Apache License 2.0
+- Base model: `cl-nagoya/ruri-v3-reranker-310m` (315M parameters)
 - LoRA parameters: rank 16, alpha 32, dropout 0.05; ModernBERT `Wqkv`, `Wo`, `Wi`
 - Export: ONNX opset 18
-- CPU artifact: dynamic INT8
-- GPU artifact: FP16
+- CPU artifact: dynamic INT8 (`ruri-ime-int8.onnx`, 317.66 MB)
+- GPU artifact: FP16 (`ruri-ime-fp16.onnx`, 631.04 MB)
 
 The bundle and every required file are pinned by SHA-256 in `model-manifest.json`. The model is published separately from Git history.
 
@@ -35,4 +44,3 @@ Japanese IME候補の文脈適合度を比較する用途です。医学・法�
 ## Attribution and license
 
 Base model copyright and credit belong to the CL Research Group in Nagoya, Japan and the Ruri authors. Base and Yamatana model modifications are distributed under Apache License 2.0. See `NOTICE` and `THIRD_PARTY_LICENSES.md`.
-

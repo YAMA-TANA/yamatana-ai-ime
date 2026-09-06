@@ -24,6 +24,7 @@ bazel-*
 
 # Models and generated data (downloaded with a pinned manifest)
 models/
+integration/*.json
 *.onnx
 *.safetensors
 data/massive_homophone_database.json
@@ -45,4 +46,3 @@ data/homonym_ksasao/homonym2.txt
 .idea/
 Thumbs.db
 Desktop.ini
-

@@ -15,9 +15,25 @@ PRODUCTIVE_AFFIXES = {
     "時", "用", "製", "器", "機", "線", "風", "代", "費", "料", "率",
 }
 
+# High-confidence lexical compounds whose components are independently valid
+# homophones.  These bonuses complement the neural score after (not instead
+# of) the single full-candidate forward pass.  Keeping the table directional
+# prevents an unrelated occurrence elsewhere in the context from firing it.
+RIGHT_CONTEXT_COMPOUNDS = {
+    "少年": {
+        "非行": 100.0,
+        "飛行": 0.0,
+    },
+}
+
 
 def contextual_candidate_bonus(context: str, candidate_text: str) -> float:
     """Return a high-confidence bonus for common Japanese homophone traps."""
+    _prefix, separator, suffix = context.partition(" ")
+    if separator:
+        for right_context, candidates in RIGHT_CONTEXT_COMPOUNDS.items():
+            if suffix.startswith(right_context) and candidate_text in candidates:
+                return candidates[candidate_text]
     if "象" in context and ("長い" in context or "なが" in context):
         if candidate_text == "鼻":
             return 100.0
