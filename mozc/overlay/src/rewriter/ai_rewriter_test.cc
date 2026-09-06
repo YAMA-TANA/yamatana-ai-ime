@@ -105,6 +105,57 @@ TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
   }
 }
 
+TEST(AiRewriterTest, AvailableRankerDoesNotMergeThreeSegmentPhrase) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_three_segment_safety_test";
+  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 4096, 4096, 0, nullptr);
+  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("わたしが");
+  first->add_candidate()->value = "私が";
+  Segment* second = segments.add_segment();
+  second->set_key("する");
+  second->add_candidate()->value = "する";
+  Segment* third = segments.add_segment();
+  third->set_key("こと");
+  third->add_candidate()->value = "こと";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
+  CloseHandle(pipe);
+
+  EXPECT_FALSE(resize.has_value());
+}
+
+TEST(AiRewriterTest, AvailableRankerDoesNotMergeGrammarSuffix) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_grammar_suffix_safety_test";
+  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 4096, 4096, 0, nullptr);
+  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("わたしがする");
+  first->add_candidate()->value = "私がする";
+  Segment* second = segments.add_segment();
+  second->set_key("こと");
+  second->add_candidate()->value = "こと";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
+  CloseHandle(pipe);
+
+  EXPECT_FALSE(resize.has_value());
+}
+
 TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
   const std::wstring pipe_name =
       L"\\\\.\\pipe\\yamatana_ai_rewriter_preserve_test";
