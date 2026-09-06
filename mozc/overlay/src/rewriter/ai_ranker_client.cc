@@ -57,6 +57,34 @@ DWORD RemainingMs(ULONGLONG deadline) {
   return static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, INFINITE - 1));
 }
 
+bool WaitForPipeUntil(const std::wstring& pipe_name, ULONGLONG deadline) {
+  while (const DWORD remaining_ms = RemainingMs(deadline)) {
+    // Use short slices so a server that closes one pipe instance and creates
+    // the next one cannot make the client fail with ERROR_FILE_NOT_FOUND.
+    const DWORD slice_ms = std::min<DWORD>(remaining_ms, 50);
+    if (WaitNamedPipeW(pipe_name.c_str(), slice_ms)) return true;
+    const DWORD error = GetLastError();
+    if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY &&
+        error != ERROR_SEM_TIMEOUT) {
+      return false;
+    }
+    if (error == ERROR_FILE_NOT_FOUND) Sleep(1);
+  }
+  return false;
+}
+
+HANDLE OpenPipeUntil(const std::wstring& pipe_name, ULONGLONG deadline) {
+  while (WaitForPipeUntil(pipe_name, deadline)) {
+    HANDLE pipe =
+        CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
+                    nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+    if (pipe != INVALID_HANDLE_VALUE) return pipe;
+    const DWORD error = GetLastError();
+    if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY) break;
+  }
+  return INVALID_HANDLE_VALUE;
+}
+
 void CancelAndClose(HANDLE pipe, OVERLAPPED* overlapped) {
   // Keep stack OVERLAPPED storage alive until kernel cancellation completes.
   CancelIoEx(pipe, overlapped);
@@ -197,6 +225,12 @@ std::string NextRequestId() {
 
 Client::Client(std::wstring pipe_name) : pipe_name_(std::move(pipe_name)) {}
 
+bool Client::IsAvailable(int timeout_ms) const {
+  if (timeout_ms <= 0) return false;
+  return WaitForPipeUntil(
+      pipe_name_, GetTickCount64() + static_cast<ULONGLONG>(timeout_ms));
+}
+
 bool Client::Rank(const std::string& preceding_text, const std::string& reading,
                   const std::vector<CandidateInput>& candidates,
                   int timeout_ms,
@@ -216,7 +250,12 @@ bool Client::Rank(const std::string& preceding_text,
       following_text.size() > 32768 || reading.size() > 512) {
     return false;
   }
-  const int budget_ms = std::min(timeout_ms, 500);
+  // Keep a defensive upper bound for callers, but do not silently truncate
+  // AiRewriter's explicit-conversion budget.  The packaged CPU model commonly
+  // needs more than 500 ms, and truncating it here discarded a valid AI result
+  // after the server had already started inference.
+  constexpr int kMaxTimeoutMs = 3000;
+  const int budget_ms = std::min(timeout_ms, kMaxTimeoutMs);
   const std::string request_id = NextRequestId();
   std::ostringstream json;
   std::string escaped;
@@ -254,13 +293,7 @@ bool Client::Rank(const std::string& preceding_text,
 
   const ULONGLONG deadline =
       GetTickCount64() + static_cast<ULONGLONG>(budget_ms);
-  const DWORD wait_ms = RemainingMs(deadline);
-  if (wait_ms == 0 || !WaitNamedPipeW(pipe_name_.c_str(), wait_ms)) {
-    return false;
-  }
-  HANDLE pipe = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE,
-                            0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
-                            nullptr);
+  HANDLE pipe = OpenPipeUntil(pipe_name_, deadline);
   if (pipe == INVALID_HANDLE_VALUE) return false;
   std::string response;
   bool ok = WriteDeadline(pipe, payload, deadline);
@@ -278,6 +311,7 @@ bool Client::Rank(const std::string& preceding_text,
 namespace mozc {
 namespace ai_ranker {
 Client::Client(std::wstring) {}
+bool Client::IsAvailable(int) const { return false; }
 bool Client::Rank(const std::string&, const std::string&,
                   const std::vector<CandidateInput>&, int,
                   std::vector<RankedCandidate>*) const {

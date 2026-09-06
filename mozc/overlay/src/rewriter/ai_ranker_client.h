@@ -7,9 +7,10 @@
 namespace mozc {
 namespace ai_ranker {
 
-// Default end-to-end budget for the optional ranker call.  A timeout keeps
-// Mozc responsive and preserves its original candidate order.
-constexpr int kDefaultTimeoutMs = 500;
+// Explicit conversion may need a full CPU inference pass.  Typing-time
+// realtime conversions skip AiRewriter entirely, so this budget is only paid
+// after the user explicitly requests conversion (normally with Space).
+constexpr int kDefaultTimeoutMs = 2000;
 
 // A request candidate is deliberately a copy of Mozc's existing value.  The
 // ranker can only return one of these IDs; it cannot create a replacement.
@@ -28,6 +29,10 @@ struct RankedCandidate {
 class Client {
  public:
   explicit Client(std::wstring pipe_name);
+
+  // Returns whether a server pipe becomes available within the short probe
+  // budget.  This does not connect to the pipe or start inference.
+  bool IsAvailable(int timeout_ms) const;
 
   // Returns false on every transport, deadline, or schema error.  |ranked|
   // is not modified on failure, so callers can preserve Mozc's ordering.

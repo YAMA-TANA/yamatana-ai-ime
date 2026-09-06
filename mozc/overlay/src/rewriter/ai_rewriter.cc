@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +28,11 @@ int RemainingBudgetMs(const Clock::time_point& deadline) {
   return static_cast<int>(
       std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
           .count());
+}
+
+bool IsRerankableSegment(const converter::Segment& segment) {
+  return segment.segment_type() == converter::Segment::FREE ||
+         segment.segment_type() == converter::Segment::FIXED_BOUNDARY;
 }
 
 bool ApplyPermutation(converter::Segment* segment,
@@ -101,6 +107,48 @@ int AiRewriter::capability(const ConversionRequest& request) const {
   return RewriterInterface::CONVERSION;
 }
 
+std::optional<RewriterInterface::ResizeSegmentsRequest>
+AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
+                                       const Segments& segments) const {
+  if (request.options().skip_slow_rewriters ||
+      request.options().used_in_predictor_realtime_conversion ||
+      segments.resized()) {
+    return std::nullopt;
+  }
+  const size_t count = segments.conversion_segments_size();
+  if (count < 2 || count > 4) return std::nullopt;
+
+  // A compound word may be split so that the intended surface form does not
+  // exist in any individual segment (e.g. 主戦 + 率 instead of 主旋律).
+  // When local context and the AI server are available, ask Mozc to generate
+  // its normal candidates once more with a single short boundary.  AiRewriter
+  // can then rank the real dictionary candidate without generating text.
+  if (request.context().preceding_text().empty() &&
+      segments.history_value().empty()) {
+    return std::nullopt;
+  }
+  size_t total_key_chars = 0;
+  for (const converter::Segment& segment : segments.conversion_segments()) {
+    if (segment.segment_type() != converter::Segment::FREE) {
+      return std::nullopt;
+    }
+    total_key_chars += segment.key_len();
+  }
+  constexpr size_t kMaxCompoundChars = 12;
+  if (total_key_chars < 2 || total_key_chars > kMaxCompoundChars) {
+    return std::nullopt;
+  }
+  ai_ranker::Client client(pipe_name_);
+  if (!client.IsAvailable(25)) return std::nullopt;
+
+  ResizeSegmentsRequest resize_request = {
+      .segment_index = 0,
+      .segment_sizes = {static_cast<uint8_t>(total_key_chars), 0, 0, 0, 0, 0,
+                        0, 0},
+  };
+  return resize_request;
+}
+
 bool AiRewriter::Rewrite(const ConversionRequest& request,
                          Segments* segments) const {
   // Keep the direct-call path safe too.  MergerRewriter normally checks
@@ -134,8 +182,7 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   size_t rerankable_segments = 0;
   for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {
     const converter::Segment& seg = segments->conversion_segment(i);
-    if (seg.segment_type() == converter::Segment::FREE &&
-      seg.candidates_size() >= 2) {
+    if (IsRerankableSegment(seg) && seg.candidates_size() >= 2) {
       ++rerankable_segments;
     }
   }
@@ -152,8 +199,7 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   for (size_t index = 0; index < segments->conversion_segments_size();
        ++index) {
     converter::Segment* segment = segments->mutable_conversion_segment(index);
-    if (segment == nullptr ||
-        segment->segment_type() != converter::Segment::FREE) {
+    if (segment == nullptr || !IsRerankableSegment(*segment)) {
       continue;
     }
     if (segment->candidates_size() < 2) {
@@ -163,11 +209,10 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
     }
 
     // The useful homophone candidates are concentrated near the top of
-    // Mozc's list.  Twelve candidates fit the CPU inference deadline
-    // reliably while still covering substantially more than the visible
-    // first page.
+    // Mozc's list.  Eight candidates cover more than the visible first page
+    // while keeping explicit Space-key inference responsive on CPU.
     const size_t limit =
-        std::min<size_t>(12, segment->candidates_size());
+        std::min<size_t>(8, segment->candidates_size());
     std::vector<ai_ranker::CandidateInput> input;
     input.reserve(limit);
     for (size_t i = 0; i < limit; ++i) {

@@ -94,9 +94,9 @@ class OnnxRuriReranker:
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         # ONNX Runtime otherwise chooses its own global thread-pool size.  On
-        # desktop CPUs that choice proved slow enough for a 20-candidate IME
-        # request to miss Mozc's 500 ms deadline.  A small local pool keeps the
-        # request inside the conversion budget without occupying every core.
+        # desktop CPUs that choice proved slow enough for a multi-candidate IME
+        # request to miss the conversion deadline.  A small local pool keeps
+        # the request responsive without occupying every core.
         options.intra_op_num_threads = min(8, max(2, os.cpu_count() or 2))
         options.inter_op_num_threads = 1
         if use_gpu:
@@ -123,10 +123,10 @@ class OnnxRuriReranker:
         }
 
     def _warmup(self) -> None:
-        # DirectML compiles graphs lazily for new batch shapes.  Warm the
-        # common Mozc candidate count so the user's first conversion does not
-        # pay that one-time cost.
-        warmup_count = 20 if self.device == "gpu-directml" else 4
+        # DirectML compiles graphs lazily for new batch shapes.  Warm the exact
+        # eight-candidate batch used by Mozc so the user's first conversion
+        # does not pay that one-time cost.
+        warmup_count = 8
         query = "文書方針: 一般的な日本語文書。\n文脈に合う表記を選びなさい。"
         inputs = self._encode(
             [query] * warmup_count,

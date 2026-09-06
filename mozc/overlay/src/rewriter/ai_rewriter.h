@@ -15,6 +15,9 @@ class AiRewriter final : public RewriterInterface {
       std::wstring pipe_name = L"\\\\.\\pipe\\ai_ime_ranker");
 
   int capability(const ConversionRequest& request) const override;
+  std::optional<ResizeSegmentsRequest> CheckResizeSegmentsRequest(
+      const ConversionRequest& request,
+      const Segments& segments) const override;
   bool Rewrite(const ConversionRequest& request,
                Segments* segments) const override;
 

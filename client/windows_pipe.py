@@ -22,8 +22,6 @@ def rank_once(pipe_name: str, request: Dict[str, Any], timeout_ms: int = 200) ->
     k32 = ctypes.windll.kernel32
     k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
     k32.WaitNamedPipeW.restype = ctypes.c_int
-    if not k32.WaitNamedPipeW(pipe_name, max(1, int(timeout_ms))):
-        raise TimeoutError("ranker pipe is not ready")
     k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
                                 ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
                                 ctypes.c_void_p]
@@ -40,10 +38,21 @@ def rank_once(pipe_name: str, request: Dict[str, Any], timeout_ms: int = 200) ->
     k32.ReadFile.restype = ctypes.c_int
     k32.CloseHandle.argtypes = [ctypes.c_void_p]
     k32.CloseHandle.restype = ctypes.c_int
-    handle = k32.CreateFileW(pipe_name, 0xC0000000, 0, None, 3, 0, None)
     invalid = ctypes.c_void_p(-1).value
+    connect_deadline = time.perf_counter() + max(1, timeout_ms) / 1000.0
+    handle = invalid
+    while time.perf_counter() < connect_deadline:
+        remaining_ms = max(1, int((connect_deadline - time.perf_counter()) * 1000))
+        if k32.WaitNamedPipeW(pipe_name, min(remaining_ms, 50)):
+            handle = k32.CreateFileW(pipe_name, 0xC0000000, 0, None, 3, 0, None)
+            if handle and handle != invalid:
+                break
+        # The server services one instance at a time.  Between requests there
+        # is a brief interval where WaitNamedPipeW reports FILE_NOT_FOUND;
+        # retry it within the caller's budget instead of failing immediately.
+        time.sleep(0.001)
     if not handle or handle == invalid:
-        raise OSError("CreateFileW failed")
+        raise TimeoutError("ranker pipe is not ready")
     try:
         payload = (json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
         written = ctypes.c_uint32()

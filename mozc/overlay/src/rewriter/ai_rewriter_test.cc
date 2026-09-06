@@ -2,6 +2,10 @@
 
 #include <utility>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "converter/candidate.h"
 #include "converter/segments.h"
 #include "protocol/commands.pb.h"
@@ -55,6 +59,40 @@ TEST(AiRewriterTest, PredictorRealtimeMarkerSkipsAiRanker) {
   segment->add_candidate()->value = "鼻";
   EXPECT_FALSE(rewriter.Rewrite(request, &segments));
 }
+
+#ifdef _WIN32
+TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_resize_test";
+  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                                 1, 4096, 4096, 0, nullptr);
+  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("しゅせん");
+  first->add_candidate()->value = "主戦";
+  Segment* second = segments.add_segment();
+  second->set_key("りつ");
+  second->add_candidate()->value = "率";
+
+  commands::Context context;
+  context.set_preceding_text("この曲の");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
+  CloseHandle(pipe);
+
+  ASSERT_TRUE(resize.has_value());
+  EXPECT_EQ(resize->segment_index, 0);
+  EXPECT_EQ(resize->segment_sizes[0], 6);
+  for (size_t i = 1; i < resize->segment_sizes.size(); ++i) {
+    EXPECT_EQ(resize->segment_sizes[i], 0);
+  }
+}
+#endif
 
 TEST(AiRewriterTest, NoContextPreservesMozcOrder) {
   Segments segments;
