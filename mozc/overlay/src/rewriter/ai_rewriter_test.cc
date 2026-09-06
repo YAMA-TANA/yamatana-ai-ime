@@ -1,6 +1,12 @@
 #include "rewriter/ai_rewriter.h"
 
+#include <algorithm>
+#include <regex>
+#include <sstream>
+#include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -21,9 +27,120 @@ namespace {
 class CompoundDictionary final : public dictionary::DictionaryInterface {
  public:
   bool HasKey(absl::string_view key) const override {
-    return key == "ひこう" || key == "しょうねん";
+    return key == "ひこう" || key == "しょうねん" ||
+           key == "ひこうしょうねん" || key == "しゅせんりつ";
+  }
+
+  void LookupExact(absl::string_view key, Callback* callback) const override {
+    if (callback == nullptr) return;
+    auto emit = [&](absl::string_view value, int cost) {
+      dictionary::Token token(key, value);
+      token.cost = cost;
+      callback->OnToken(key, key, token);
+    };
+
+    if (key == "ひこう") {
+      emit("非行", 100);
+      emit("飛行", 200);
+    } else if (key == "しょうねん") {
+      emit("少年", 100);
+    } else if (key == "ひこうしょうねん") {
+      emit("飛行少年", 100);
+    } else if (key == "しゅせんりつ") {
+      emit("主旋律", 100);
+    }
   }
 };
+
+#ifdef _WIN32
+class FakeRankerServer {
+ public:
+  FakeRankerServer(std::wstring pipe_name, std::string winner)
+      : pipe_name_(std::move(pipe_name)), winner_(std::move(winner)) {
+    pipe_ = CreateNamedPipeW(pipe_name_.c_str(), PIPE_ACCESS_DUPLEX,
+                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                             1, 65536, 65536, 0, nullptr);
+    if (pipe_ != INVALID_HANDLE_VALUE) {
+      thread_ = std::thread([this]() { Serve(); });
+    }
+  }
+
+  ~FakeRankerServer() {
+    if (thread_.joinable()) thread_.join();
+    if (pipe_ != INVALID_HANDLE_VALUE) CloseHandle(pipe_);
+  }
+
+  bool valid() const { return pipe_ != INVALID_HANDLE_VALUE; }
+
+ private:
+  void Serve() {
+    const BOOL connected = ConnectNamedPipe(pipe_, nullptr);
+    if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) return;
+
+    std::string request;
+    char buffer[65536];
+    while (true) {
+      DWORD read = 0;
+      if (!ReadFile(pipe_, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
+        return;
+      }
+      request.append(buffer, buffer + read);
+      if (!request.empty() && request.back() == '\n') break;
+      if (request.size() > 262144) return;
+    }
+
+    const std::string request_marker = "\"request_id\":\"";
+    const size_t id_start = request.find(request_marker);
+    if (id_start == std::string::npos) return;
+    const size_t id_value_start = id_start + request_marker.size();
+    const size_t id_end = request.find('"', id_value_start);
+    if (id_end == std::string::npos) return;
+    const std::string request_id =
+        request.substr(id_value_start, id_end - id_value_start);
+
+    static const std::regex candidate_regex(
+        "\\{\\\"id\\\":\\\"([A-Za-z0-9_.:-]+)\\\",\\\"text\\\":");
+    std::vector<std::string> ids;
+    for (std::sregex_iterator it(request.begin(), request.end(),
+                                 candidate_regex),
+         end;
+         it != end; ++it) {
+      ids.push_back((*it)[1].str());
+    }
+    if (ids.empty()) return;
+
+    auto winner_it = std::find(ids.begin(), ids.end(), winner_);
+    if (winner_it != ids.end()) {
+      const std::string winner = *winner_it;
+      ids.erase(winner_it);
+      ids.insert(ids.begin(), winner);
+    }
+
+    std::ostringstream response;
+    response << "{\"request_id\":\"" << request_id << "\",\"candidates\":[";
+    for (size_t i = 0; i < ids.size(); ++i) {
+      if (i) response << ',';
+      double score = -static_cast<double>(i + 1);
+      if (ids[i] == winner_) score = 10.0;
+      if (ids[i] == "baseline" && winner_ != "baseline") score = 0.0;
+      response << "{\"id\":\"" << ids[i] << "\",\"score\":" << score
+               << ",\"rank\":" << (i + 1) << '}';
+    }
+    response << "]}\n";
+    const std::string payload = response.str();
+    DWORD written = 0;
+    WriteFile(pipe_, payload.data(), static_cast<DWORD>(payload.size()),
+              &written, nullptr);
+    FlushFileBuffers(pipe_);
+    DisconnectNamedPipe(pipe_);
+  }
+
+  std::wstring pipe_name_;
+  std::string winner_;
+  HANDLE pipe_ = INVALID_HANDLE_VALUE;
+  std::thread thread_;
+};
+#endif
 
 }  // namespace
 
@@ -73,13 +190,12 @@ TEST(AiRewriterTest, PredictorRealtimeMarkerSkipsAiRanker) {
 }
 
 #ifdef _WIN32
-TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
+TEST(AiRewriterTest, BoundaryProbeMergesWhenWholeWordRepairClearlyWins) {
   const std::wstring pipe_name =
       L"\\\\.\\pipe\\yamatana_ai_rewriter_resize_test";
-  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                 1, 4096, 4096, 0, nullptr);
-  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+  FakeRankerServer server(pipe_name, "repair0");
+  ASSERT_TRUE(server.valid());
+  CompoundDictionary dictionary;
 
   Segments segments;
   Segment* first = segments.add_segment();
@@ -93,9 +209,8 @@ TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
   context.set_preceding_text("この曲の");
   const ConversionRequest request =
       ConversionRequestBuilder().SetContext(context).Build();
-  AiRewriter rewriter(pipe_name);
+  AiRewriter rewriter(&dictionary, pipe_name);
   const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
-  CloseHandle(pipe);
 
   ASSERT_TRUE(resize.has_value());
   EXPECT_EQ(resize->segment_index, 0);
@@ -105,14 +220,27 @@ TEST(AiRewriterTest, AvailableRankerMergesShortCompoundForWholeWordCandidates) {
   }
 }
 
-TEST(AiRewriterTest, AvailableRankerDoesNotMergeThreeSegmentPhrase) {
+TEST(AiRewriterTest, BoundaryProbeKeepsMozcBoundaryWhenBaselineWins) {
   const std::wstring pipe_name =
-      L"\\\\.\\pipe\\yamatana_ai_rewriter_three_segment_safety_test";
-  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                 1, 4096, 4096, 0, nullptr);
-  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_baseline_test";
+  FakeRankerServer server(pipe_name, "baseline");
+  ASSERT_TRUE(server.valid());
+  CompoundDictionary dictionary;
 
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("しゅせん");
+  first->add_candidate()->value = "主戦";
+  Segment* second = segments.add_segment();
+  second->set_key("りつ");
+  second->add_candidate()->value = "率";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(&dictionary, pipe_name);
+  EXPECT_FALSE(rewriter.CheckResizeSegmentsRequest(request, segments).has_value());
+}
+
+TEST(AiRewriterTest, AvailableRankerDoesNotMergeThreeSegmentPhrase) {
   Segments segments;
   Segment* first = segments.add_segment();
   first->set_key("わたしが");
@@ -124,22 +252,13 @@ TEST(AiRewriterTest, AvailableRankerDoesNotMergeThreeSegmentPhrase) {
   third->set_key("こと");
   third->add_candidate()->value = "こと";
 
+  CompoundDictionary dictionary;
   const ConversionRequest request;
-  AiRewriter rewriter(pipe_name);
-  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
-  CloseHandle(pipe);
-
-  EXPECT_FALSE(resize.has_value());
+  AiRewriter rewriter(&dictionary, L"missing-ai-ime-pipe");
+  EXPECT_FALSE(rewriter.CheckResizeSegmentsRequest(request, segments).has_value());
 }
 
 TEST(AiRewriterTest, AvailableRankerDoesNotMergeGrammarSuffix) {
-  const std::wstring pipe_name =
-      L"\\\\.\\pipe\\yamatana_ai_rewriter_grammar_suffix_safety_test";
-  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                 1, 4096, 4096, 0, nullptr);
-  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
-
   Segments segments;
   Segment* first = segments.add_segment();
   first->set_key("わたしがする");
@@ -148,21 +267,18 @@ TEST(AiRewriterTest, AvailableRankerDoesNotMergeGrammarSuffix) {
   second->set_key("こと");
   second->add_candidate()->value = "こと";
 
+  CompoundDictionary dictionary;
   const ConversionRequest request;
-  AiRewriter rewriter(pipe_name);
-  const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
-  CloseHandle(pipe);
-
-  EXPECT_FALSE(resize.has_value());
+  AiRewriter rewriter(&dictionary, L"missing-ai-ime-pipe");
+  EXPECT_FALSE(rewriter.CheckResizeSegmentsRequest(request, segments).has_value());
 }
 
-TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
+TEST(AiRewriterTest, BoundaryProbeLocksSplitWhenSplitOnlyRepairWins) {
   const std::wstring pipe_name =
       L"\\\\.\\pipe\\yamatana_ai_rewriter_preserve_test";
-  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                 1, 4096, 4096, 0, nullptr);
-  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+  FakeRankerServer server(pipe_name, "repair0");
+  ASSERT_TRUE(server.valid());
+  CompoundDictionary dictionary;
 
   Segments segments;
   Segment* first = segments.add_segment();
@@ -173,9 +289,8 @@ TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
   second->add_candidate()->value = "少年";
 
   const ConversionRequest request;
-  AiRewriter rewriter(pipe_name);
+  AiRewriter rewriter(&dictionary, pipe_name);
   const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
-  CloseHandle(pipe);
 
   ASSERT_TRUE(resize.has_value());
   EXPECT_EQ(resize->segment_index, 0);
@@ -183,13 +298,12 @@ TEST(AiRewriterTest, AvailableRankerPreservesSubstantiveWordBoundary) {
   EXPECT_EQ(resize->segment_sizes[1], 5);
 }
 
-TEST(AiRewriterTest, AvailableRankerRestoresUniqueCompoundBoundary) {
+TEST(AiRewriterTest, BoundaryProbeRestoresCollapsedCompoundWhenSplitWins) {
   const std::wstring pipe_name =
       L"\\\\.\\pipe\\yamatana_ai_rewriter_split_test";
-  HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                 1, 4096, 4096, 0, nullptr);
-  ASSERT_NE(pipe, INVALID_HANDLE_VALUE);
+  FakeRankerServer server(pipe_name, "repair0");
+  ASSERT_TRUE(server.valid());
+  CompoundDictionary dictionary;
 
   Segments segments;
   Segment* segment = segments.add_segment();
@@ -199,11 +313,9 @@ TEST(AiRewriterTest, AvailableRankerRestoresUniqueCompoundBoundary) {
   segment->add_candidate()->value = "ひこうしょうねん";
   segment->add_candidate()->value = "ヒコウショウネン";
 
-  CompoundDictionary dictionary;
   const ConversionRequest request;
   AiRewriter rewriter(&dictionary, pipe_name);
   const auto resize = rewriter.CheckResizeSegmentsRequest(request, segments);
-  CloseHandle(pipe);
 
   ASSERT_TRUE(resize.has_value());
   EXPECT_EQ(resize->segment_index, 0);
