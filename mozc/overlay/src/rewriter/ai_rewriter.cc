@@ -244,6 +244,7 @@ bool ApplyPermutation(converter::Segment* segment,
     if (!value) return false;
   }
 
+  const bool top_promoted = !desired.empty() && desired[0] != 0;
   std::vector<size_t> current_ids(limit);
   for (size_t i = 0; i < limit; ++i) current_ids[i] = i;
   std::vector<std::pair<int, int>> moves;
@@ -263,10 +264,13 @@ bool ApplyPermutation(converter::Segment* segment,
       current_ids.insert(current_ids.begin() + target, moved);
     }
   }
+  if (moves.empty()) return false;
   for (const auto [current, target] : moves) {
     segment->move_candidate(current, target);
   }
-  segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;
+  if (top_promoted) {
+    segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;
+  }
   return true;
 }
 
@@ -423,11 +427,17 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   if (preceding_text.empty()) {
     preceding_text = segments->history_value();
   }
-  if (preceding_text.empty() && !segments->resized()) {
+  const std::string trailing_text(request.context().following_text());
+  const bool has_in_composition_context =
+      !trailing_text.empty() || segments->conversion_segments_size() > 1;
+  // Preserve the conservative single-word/no-context behavior, but do not
+  // disable AI for an entire sentence just because nothing was committed
+  // before the current composition.  Later conversion segments provide real
+  // following context to the first segment and accumulated context thereafter.
+  if (preceding_text.empty() && !segments->resized() &&
+      !has_in_composition_context) {
     return false;
   }
-
-  const std::string trailing_text(request.context().following_text());
 
   size_t rerankable_segments = 0;
   for (size_t i = 0; i < segments->conversion_segments_size(); ++i) {

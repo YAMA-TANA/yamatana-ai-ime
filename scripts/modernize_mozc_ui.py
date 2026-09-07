@@ -144,19 +144,19 @@ def patch_candidate_window(path: Path) -> None:
 
 
 def patch_ai_rewriter(path: Path) -> None:
-    replace_once(
-        path,
-        "  for (const auto [current, target] : moves) {\n"
-        "    segment->move_candidate(current, target);\n"
-        "  }\n"
-        "  segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;\n"
-        "  return true;\n",
-        "  const bool top_changed = !desired.empty() && desired[0] != 0;\n"
+    text = path.read_text(encoding="utf-8")
+    badge_marker = "// Show the badge only when AI actually promotes a non-Mozc-top"
+    if badge_marker in text:
+        return
+
+    # v2.0.3+ already knows whether rank 1 was actually promoted and returns
+    # false for an unchanged permutation.  Add only the user-visible badge.
+    new_logic = (
         "  if (moves.empty()) return false;\n"
         "  for (const auto [current, target] : moves) {\n"
         "    segment->move_candidate(current, target);\n"
         "  }\n"
-        "  if (top_changed) {\n"
+        "  if (top_promoted) {\n"
         "    converter::Candidate* reranked_candidate = segment->mutable_candidate(0);\n"
         "    reranked_candidate->attributes |= converter::Attribute::RERANKED;\n"
         "    // Show the badge only when AI actually promotes a non-Mozc-top\n"
@@ -168,8 +168,48 @@ def patch_ai_rewriter(path: Path) -> None:
         "      reranked_candidate->description.append(\"AI\");\n"
         "    }\n"
         "  }\n"
-        "  return true;\n",
-        "AI candidate indicator",
+        "  return true;\n"
+    )
+    current_logic = (
+        "  if (moves.empty()) return false;\n"
+        "  for (const auto [current, target] : moves) {\n"
+        "    segment->move_candidate(current, target);\n"
+        "  }\n"
+        "  if (top_promoted) {\n"
+        "    segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;\n"
+        "  }\n"
+        "  return true;\n"
+    )
+    if text.count(current_logic) == 1:
+        path.write_text(
+            text.replace(current_logic, new_logic, 1),
+            encoding="utf-8",
+            newline="\n",
+        )
+        return
+
+    # Backward compatibility for older overlay/source revisions.
+    legacy_logic = (
+        "  for (const auto [current, target] : moves) {\n"
+        "    segment->move_candidate(current, target);\n"
+        "  }\n"
+        "  segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;\n"
+        "  return true;\n"
+    )
+    legacy_replacement = (
+        "  const bool top_promoted = !desired.empty() && desired[0] != 0;\n"
+        + new_logic
+    )
+    if text.count(legacy_logic) == 1:
+        path.write_text(
+            text.replace(legacy_logic, legacy_replacement, 1),
+            encoding="utf-8",
+            newline="\n",
+        )
+        return
+
+    raise RuntimeError(
+        f"AI candidate indicator: supported rerank block not found in {path}"
     )
 
 

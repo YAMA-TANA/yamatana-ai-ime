@@ -12,6 +12,7 @@
 #include <windows.h>
 #endif
 
+#include "converter/attribute.h"
 #include "converter/candidate.h"
 #include "converter/segments.h"
 #include "dictionary/dictionary_interface.h"
@@ -324,6 +325,85 @@ TEST(AiRewriterTest, BoundaryProbeRestoresCollapsedCompoundWhenSplitWins) {
   for (size_t i = 2; i < resize->segment_sizes.size(); ++i) {
     EXPECT_EQ(resize->segment_sizes[i], 0);
   }
+}
+
+TEST(AiRewriterTest, RankerWinnerMovesToCandidateZero) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_rank_apply_test";
+  FakeRankerServer server(pipe_name, "c1");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("はな");
+  converter::Candidate* first = segment->add_candidate();
+  first->key = "はな";
+  first->value = "花";
+  converter::Candidate* second = segment->add_candidate();
+  second->key = "はな";
+  second->value = "鼻";
+
+  commands::Context context;
+  context.set_preceding_text("象の長い");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_TRUE(rewriter.Rewrite(request, &segments));
+  ASSERT_EQ(segments.segment(0).candidates_size(), 2);
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "鼻");
+  EXPECT_EQ(segments.segment(0).candidate(1).value, "花");
+  EXPECT_NE(segments.segment(0).candidate(0).attributes &
+                converter::Attribute::RERANKED,
+            0);
+}
+
+TEST(AiRewriterTest, SentenceStartUsesFollowingSegmentAsContext) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_sentence_start_test";
+  FakeRankerServer server(pipe_name, "c1");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* first = segments.add_segment();
+  first->set_key("はな");
+  first->add_candidate()->value = "花";
+  first->add_candidate()->value = "鼻";
+  Segment* second = segments.add_segment();
+  second->set_key("がながい");
+  second->add_candidate()->value = "が長い";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_TRUE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "鼻");
+  EXPECT_EQ(segments.segment(0).candidate(1).value, "花");
+}
+
+TEST(AiRewriterTest, UnchangedAiOrderDoesNotMarkReranked) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_same_order_test";
+  FakeRankerServer server(pipe_name, "c0");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("はな");
+  segment->add_candidate()->value = "花";
+  segment->add_candidate()->value = "鼻";
+
+  commands::Context context;
+  context.set_preceding_text("庭の");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
+  EXPECT_EQ(segments.segment(0).candidate(0).attributes &
+                converter::Attribute::RERANKED,
+            0);
 }
 #endif
 
