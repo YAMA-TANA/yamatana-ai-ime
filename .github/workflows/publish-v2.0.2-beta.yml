@@ -20,7 +20,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p release
-          gh run download 34106203314 \
+          gh run download 34097241149 \
             --repo YAMA-TANA/yamatana-ai-ime \
             --name yamatana-ai-ime-2.0.2-beta-modern-ui-unsigned \
             --dir release
@@ -29,14 +29,14 @@ jobs:
         working-directory: release
         run: sha256sum -c SHA256SUMS.txt
 
-      - name: Publish or refresh GitHub prerelease
+      - name: Restore v2.0.2-beta prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > release-notes.md <<'EOF'
           # Yamatana AI IME v2.0.2-beta
 
-          Mozc由来の候補ウィンドウをWindows 11向けに刷新し、AI再ランキングもAIスコア差を中心に判断するよう調整したBetaです。
+          v2.0.1-beta の変換ロジックを引き継ぎつつ、Mozc由来の候補ウィンドウを中心にUIを刷新したBetaです。
 
           ## 主な変更
 
@@ -48,16 +48,9 @@ jobs:
           - DPIスケーリングを考慮し、高DPI環境でも角丸や余白が極端に崩れにくいようにしています。
           - Mozc取得後にUI差分を自動適用するビルド工程を追加し、GitHub Actionsから同じ構成を再現できるようにしました。
 
-          ## AI再ランキングの調整
+          ## 変換エンジンについて
 
-          - Mozcの元順位に一律の線形ペナルティを加える方式をやめ、実際のAIスコア差を中心に候補順位を判断するよう変更しました。
-          - 下位候補でもAIが明確に高いスコアを出した場合は1位へ昇格でき、元順位だけで実質的に逆転不能になる挙動を抑えました。
-          - 曖昧な場合の安全側判定は、候補が元々何位だったかではなく、AIトップとMozcトップのスコア差と文脈量を基準にします。
-          - compound segment repairの安全策は維持しつつ、通常変換ではAI rerankerの判断をより直接反映します。
-
-          ## GPU・プライバシー
-
-          DirectML対応環境ではGPU推論を優先し、利用できない場合はCPUへフォールバックします。AI推論はローカルで完結し、入力内容や文脈を外部AIサービスへ送信しません。
+          70MのローカルAI rerankerと、v2.0.1-betaで追加したconfidence gate / segment repairの考え方は継続しています。入力内容や文脈を外部AIサービスへ送信する設計ではありません。
 
           ## 注意
 
@@ -65,24 +58,15 @@ jobs:
 
           MSI SHA-256:
 
-          `85CE12379793E346C5896B4511319F816F1E784AE1D2344903BA10B4F19D5037`
+          `376CDEAE235C620100DA06D389B0B52BF383DA81EC45195D7FFE367178A12A2F`
           EOF
 
-          if gh release view v2.0.2-beta --repo YAMA-TANA/yamatana-ai-ime >/dev/null 2>&1; then
-            gh release edit v2.0.2-beta \
-              --repo YAMA-TANA/yamatana-ai-ime \
-              --target d4126ffac19ce3cc3490c5adc7b8dcf67247353d \
-              --title 'Yamatana AI IME v2.0.2-beta' \
-              --notes-file release-notes.md \
-              --prerelease
-          else
-            gh release create v2.0.2-beta \
-              --repo YAMA-TANA/yamatana-ai-ime \
-              --target d4126ffac19ce3cc3490c5adc7b8dcf67247353d \
-              --title 'Yamatana AI IME v2.0.2-beta' \
-              --notes-file release-notes.md \
-              --prerelease
-          fi
+          gh release edit v2.0.2-beta \
+            --repo YAMA-TANA/yamatana-ai-ime \
+            --target a49c1b407ec41f1484db92c2c8372d74eb0f1c29 \
+            --title 'Yamatana AI IME v2.0.2-beta' \
+            --notes-file release-notes.md \
+            --prerelease
 
           gh release upload v2.0.2-beta \
             release/Yamatana-AI-IME-MOZC-Ver-2.0.2-beta-x64.msi \
