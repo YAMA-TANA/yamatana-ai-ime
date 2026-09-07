@@ -244,6 +244,7 @@ bool ApplyPermutation(converter::Segment* segment,
     if (!value) return false;
   }
 
+  const bool top_promoted = !desired.empty() && desired[0] != 0;
   std::vector<size_t> current_ids(limit);
   for (size_t i = 0; i < limit; ++i) current_ids[i] = i;
   std::vector<std::pair<int, int>> moves;
@@ -263,10 +264,13 @@ bool ApplyPermutation(converter::Segment* segment,
       current_ids.insert(current_ids.begin() + target, moved);
     }
   }
+  if (moves.empty()) return false;
   for (const auto [current, target] : moves) {
     segment->move_candidate(current, target);
   }
-  segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;
+  if (top_promoted) {
+    segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;
+  }
   return true;
 }
 
