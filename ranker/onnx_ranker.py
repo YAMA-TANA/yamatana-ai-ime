@@ -43,31 +43,30 @@ def _context_signal_length(prefix: str, suffix: str) -> int:
     return sum(1 for char in prefix + suffix if char not in _CONTEXT_NOISE)
 
 
-def _required_override_margin(context_len: int, original_index: int) -> float:
-    """Return the minimum AI score lead required to replace Mozc's top choice.
+def _required_override_margin(context_len: int) -> float:
+    """Minimum AI lead over Mozc rank 1 before replacing it.
 
-    A two-character fragment such as ``この`` is weak evidence, so the model
-    must win by a large margin.  Lower Mozc candidates also require stronger
-    evidence before they are promoted all the way to rank 1.
+    The old policy added a penalty proportional to the original Mozc rank,
+    which made low-ranked candidates effectively impossible to promote even
+    when the model strongly preferred them.  This policy depends only on the
+    actual AI score difference and the amount of surrounding context.
+
+    With little context we keep a modest safety prior for Mozc; as context
+    grows, the required lead smoothly approaches 0.10 logit points.
     """
-    margin = 0.75
-    if context_len <= 2:
-        margin += 3.0
-    elif context_len <= 5:
-        margin += 1.25
-    elif context_len <= 10:
-        margin += 0.35
-    margin += min(max(original_index, 0), 8) * 0.20
-    return margin
+    context_len = max(0, int(context_len))
+    return 0.10 + 0.60 / (1.0 + context_len / 3.0)
 
 
 def _preserve_mozc_top_if_uncertain(
     scored: list[tuple[float, int, str]], prefix: str, suffix: str
 ) -> list[tuple[float, int, str]]:
-    """Keep Mozc rank 1 unless the reranker has enough evidence to override it.
+    """Keep Mozc rank 1 only when the AI score lead is genuinely small.
 
-    Context-free calls are reserved for explicit compound-boundary repair in
-    the Mozc rewriter, so those keep the old free-reranking behaviour.
+    Candidate depth is intentionally irrelevant: a rank-20 Mozc candidate can
+    become rank 1 when its model score clearly beats Mozc's original top.
+    Context-free calls are reserved for explicit compound-boundary repair and
+    keep free reranking behaviour.
     """
     if not scored:
         return scored
@@ -81,7 +80,7 @@ def _preserve_mozc_top_if_uncertain(
         return scored
 
     actual_margin = ai_top[0] - mozc_top[0]
-    required_margin = _required_override_margin(context_len, ai_top[1])
+    required_margin = _required_override_margin(context_len)
     if actual_margin >= required_margin:
         return scored
 
@@ -99,11 +98,13 @@ class OnnxRuriReranker:
         self,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
-        prior_w: float = 0.1,
+        prior_w: float = 0.0,
         model_path: Optional[str | Path] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
-        self.prior_w = prior_w
+        # Retained for caller compatibility.  Linear rank penalties are no
+        # longer applied; Mozc's prior is represented by the score-margin gate.
+        self.prior_w = float(prior_w)
         self.context_enabled = bool(self.settings["context_enabled"])
         self.context_chars = int(self.settings["context_chars"])
         self.document_domain = str(self.settings["document_domain"])
@@ -159,15 +160,24 @@ class OnnxRuriReranker:
         if use_gpu:
             options.enable_mem_pattern = False
             options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
-            self.device = "gpu-directml"
+            requested_providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
         else:
-            providers = ["CPUExecutionProvider"]
-            self.device = "cpu"
-        LOG.info("loading %s with providers=%s", resolved_model, providers)
+            requested_providers = ["CPUExecutionProvider"]
+        LOG.info("loading %s with providers=%s", resolved_model, requested_providers)
         self.session = ort.InferenceSession(
-            str(resolved_model), sess_options=options, providers=providers
+            str(resolved_model), sess_options=options, providers=requested_providers
         )
+        self.providers = tuple(self.session.get_providers())
+        self.device = (
+            "gpu-directml"
+            if "DmlExecutionProvider" in self.providers
+            else "cpu"
+        )
+        if requested == "gpu" and self.device != "gpu-directml":
+            raise RuntimeError(
+                "DirectML provider was requested but the ONNX session did not activate it."
+            )
+        LOG.info("active ONNX providers=%s device=%s", self.providers, self.device)
         self._warmup()
 
     def _encode(self, queries: list[str], documents: list[str]) -> dict[str, np.ndarray]:
@@ -230,10 +240,11 @@ class OnnxRuriReranker:
                 else 0.0
             )
             context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", word)
-            final_score = (
-                raw_score + context_bonus - lexical_penalty
-                - self.prior_w * original_index
-            )
+            # Do not subtract a fixed amount per Mozc rank.  That policy made a
+            # low-ranked candidate need an arbitrarily larger AI lead.  The
+            # neural/lexical score is kept intact and Mozc rank 1 gets only the
+            # bounded confidence gate below.
+            final_score = raw_score + context_bonus - lexical_penalty
             scored.append((final_score, original_index, candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
         scored = _preserve_mozc_top_if_uncertain(scored, prefix, suffix)
