@@ -1,6 +1,19 @@
-/.github/ @YAMA-TANA
+# Default maintainer visibility
+* @YAMA-TANA
+
+# Release, installer and signing-sensitive paths
+/.github/workflows/ @YAMA-TANA
+/scripts/build-release.ps1 @YAMA-TANA
+/scripts/build-msi.ps1 @YAMA-TANA
 /scripts/build_ai_msi.py @YAMA-TANA
 /scripts/fetch-model.ps1 @YAMA-TANA
+/scripts/prepare_mozc_source.ps1 @YAMA-TANA
+/scripts/apply_modern_mozc_ui.py @YAMA-TANA
+/build-config.json @YAMA-TANA
+/model-manifest.json @YAMA-TANA
 /CODE_SIGNING_POLICY.md @YAMA-TANA
 /SECURITY.md @YAMA-TANA
-
+/PRIVACY.md @YAMA-TANA
+/THIRD_PARTY_LICENSES.md @YAMA-TANA
+/NOTICE @YAMA-TANA
+/mozc/ @YAMA-TANA
