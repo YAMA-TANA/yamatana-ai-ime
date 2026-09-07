@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
@@ -19,6 +20,7 @@ from ranker.lexicon import LexicalKnowledge, contextual_candidate_bonus
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
 _CONTEXT_NOISE = set(" \t\r\n、。,.!?！？「」『』（）()［］[]【】{}・:：;；")
+_RANK_PRIOR_REFERENCE_INDEX = 19
 
 
 def _runtime_roots() -> list[Path]:
@@ -43,28 +45,40 @@ def _context_signal_length(prefix: str, suffix: str) -> int:
     return sum(1 for char in prefix + suffix if char not in _CONTEXT_NOISE)
 
 
+def _rank_prior_penalty(original_index: int, max_penalty: float) -> float:
+    """Return a bounded logarithmic Mozc-rank prior.
+
+    Rank still matters, but unlike the old linear `0.1 * index` penalty it can
+    never grow without bound.  With the production max_penalty=0.1, Mozc rank
+    2 pays about 0.02, rank 5 about 0.05, rank 10 about 0.08, and rank 20+
+    saturates at 0.10.  A clear AI score lead can therefore promote any depth.
+    """
+    index = max(0, int(original_index))
+    cap = max(0.0, float(max_penalty))
+    if index == 0 or cap == 0.0:
+        return 0.0
+    normalized = math.log1p(min(index, _RANK_PRIOR_REFERENCE_INDEX)) / math.log1p(
+        _RANK_PRIOR_REFERENCE_INDEX
+    )
+    return cap * normalized
+
+
 def _required_override_margin(context_len: int) -> float:
-    """Minimum AI lead over Mozc rank 1 before replacing it.
+    """Minimum score lead over Mozc rank 1 before replacing it.
 
-    The old policy added a penalty proportional to the original Mozc rank,
-    which made low-ranked candidates effectively impossible to promote even
-    when the model strongly preferred them.  This policy depends only on the
-    actual AI score difference and the amount of surrounding context.
-
-    With little context we keep a modest safety prior for Mozc; as context
-    grows, the required lead smoothly approaches 0.10 logit points.
+    Short context keeps a small safety margin, while useful sentence context
+    quickly lowers it.  Candidate depth is already represented by the bounded
+    rank prior and is not charged a second time here.
     """
     context_len = max(0, int(context_len))
-    return 0.10 + 0.60 / (1.0 + context_len / 3.0)
+    return 0.05 + 0.25 / (1.0 + context_len / 3.0)
 
 
 def _preserve_mozc_top_if_uncertain(
     scored: list[tuple[float, int, str]], prefix: str, suffix: str
 ) -> list[tuple[float, int, str]]:
-    """Keep Mozc rank 1 only when the AI score lead is genuinely small.
+    """Keep Mozc rank 1 only when the post-prior score lead is genuinely small.
 
-    Candidate depth is intentionally irrelevant: a rank-20 Mozc candidate can
-    become rank 1 when its model score clearly beats Mozc's original top.
     Context-free calls are reserved for explicit compound-boundary repair and
     keep free reranking behaviour.
     """
@@ -98,13 +112,14 @@ class OnnxRuriReranker:
         self,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
-        prior_w: float = 0.0,
+        prior_w: float = 0.1,
         model_path: Optional[str | Path] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
-        # Retained for caller compatibility.  Linear rank penalties are no
-        # longer applied; Mozc's prior is represented by the score-margin gate.
-        self.prior_w = float(prior_w)
+        # `prior_w` is now the maximum total Mozc-rank penalty, not a per-rank
+        # multiplier.  This preserves useful Mozc prior information without
+        # making deep candidates impossible to promote.
+        self.prior_w = max(0.0, float(prior_w))
         self.context_enabled = bool(self.settings["context_enabled"])
         self.context_chars = int(self.settings["context_chars"])
         self.document_domain = str(self.settings["document_domain"])
@@ -240,11 +255,8 @@ class OnnxRuriReranker:
                 else 0.0
             )
             context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", word)
-            # Do not subtract a fixed amount per Mozc rank.  That policy made a
-            # low-ranked candidate need an arbitrarily larger AI lead.  The
-            # neural/lexical score is kept intact and Mozc rank 1 gets only the
-            # bounded confidence gate below.
-            final_score = raw_score + context_bonus - lexical_penalty
+            rank_penalty = _rank_prior_penalty(original_index, self.prior_w)
+            final_score = raw_score + context_bonus - lexical_penalty - rank_penalty
             scored.append((final_score, original_index, candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
         scored = _preserve_mozc_top_if_uncertain(scored, prefix, suffix)
