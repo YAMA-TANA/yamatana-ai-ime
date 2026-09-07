@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'mozc/overlay/src/rewriter/**'
+      - 'scripts/modernize_mozc_ui.py'
       - 'scripts/prepare_mozc_source.ps1'
       - '.github/workflows/mozc-rewriter-ci.yml'
   workflow_dispatch:
