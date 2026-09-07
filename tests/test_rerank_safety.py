@@ -7,7 +7,7 @@ from ranker.onnx_ranker import (
 
 def test_weak_context_preserves_mozc_top_when_ai_margin_is_tiny():
     scored = [
-        (0.20, 1, "c1"),
+        (0.15, 1, "c1"),
         (0.00, 0, "c0"),
         (-1.00, 2, "c2"),
     ]
