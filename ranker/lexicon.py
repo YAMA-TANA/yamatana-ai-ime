@@ -15,10 +15,10 @@ PRODUCTIVE_AFFIXES = {
     "時", "用", "製", "器", "機", "線", "風", "代", "費", "料", "率",
 }
 
-# High-confidence lexical compounds whose components are independently valid
-# homophones.  These bonuses complement the neural score after (not instead
-# of) the single full-candidate forward pass.  Keeping the table directional
-# prevents an unrelated occurrence elsewhere in the context from firing it.
+# These large values are intentionally retained for the deterministic rule
+# backend and its acceptance tests. Neural backends clamp the returned value to
+# a small hint before mixing it with model logits, so handcrafted rules cannot
+# dominate production scoring.
 RIGHT_CONTEXT_COMPOUNDS = {
     "少年": {
         "非行": 100.0,
@@ -28,7 +28,7 @@ RIGHT_CONTEXT_COMPOUNDS = {
 
 
 def contextual_candidate_bonus(context: str, candidate_text: str) -> float:
-    """Return a high-confidence bonus for common Japanese homophone traps."""
+    """Return a deterministic high-confidence bonus for known homophone traps."""
     _prefix, separator, suffix = context.partition(" ")
     if separator:
         for right_context, candidates in RIGHT_CONTEXT_COMPOUNDS.items():
@@ -101,5 +101,8 @@ class LexicalKnowledge:
             for candidate in known_candidates
         )
         if has_exact_registered and not self.is_known_word(word):
-            return 1.5
+            # Lexical grounding is a safety hint, not a veto.  A clear neural
+            # score lead can still select an unregistered but contextually
+            # appropriate surface form.
+            return 0.40
         return 0.0

@@ -151,20 +151,24 @@ def patch_ai_rewriter(path: Path) -> None:
         "  }\n"
         "  segment->mutable_candidate(0)->attributes |= converter::Attribute::RERANKED;\n"
         "  return true;\n",
+        "  const bool top_changed = !desired.empty() && desired.front() != 0;\n"
         "  for (const auto [current, target] : moves) {\n"
         "    segment->move_candidate(current, target);\n"
         "  }\n"
-        "  converter::Candidate* reranked_candidate = segment->mutable_candidate(0);\n"
-        "  reranked_candidate->attributes |= converter::Attribute::RERANKED;\n"
-        "  // The renderer exposes this as a deliberately subtle right-column badge.\n"
-        "  // It is added only after the AI ranking result has passed validation.\n"
-        "  if (reranked_candidate->description.find(\"AI\") == std::string::npos) {\n"
-        "    if (!reranked_candidate->description.empty()) {\n"
-        "      reranked_candidate->description.append(\"  \");\n"
+        "  if (top_changed) {\n"
+        "    converter::Candidate* reranked_candidate = segment->mutable_candidate(0);\n"
+        "    reranked_candidate->attributes |= converter::Attribute::RERANKED;\n"
+        "    // Show the AI badge only when AI actually promotes a different\n"
+        "    // Mozc candidate to rank 1. Merely validating Mozc's existing top\n"
+        "    // candidate must not make it look AI-selected.\n"
+        "    if (reranked_candidate->description.find(\"AI\") == std::string::npos) {\n"
+        "      if (!reranked_candidate->description.empty()) {\n"
+        "        reranked_candidate->description.append(\"  \");\n"
+        "      }\n"
+        "      reranked_candidate->description.append(\"AI\");\n"
         "    }\n"
-        "    reranked_candidate->description.append(\"AI\");\n"
         "  }\n"
-        "  return true;\n",
+        "  return !moves.empty();\n",
         "AI candidate indicator",
     )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
@@ -19,6 +20,7 @@ from ranker.lexicon import LexicalKnowledge, contextual_candidate_bonus
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
 _CONTEXT_NOISE = set(" \t\r\n、。,.!?！？「」『』（）()［］[]【】{}・:：;；")
+_RANK_PRIOR_REFERENCE_INDEX = 19
 
 
 def _runtime_roots() -> list[Path]:
@@ -43,31 +45,42 @@ def _context_signal_length(prefix: str, suffix: str) -> int:
     return sum(1 for char in prefix + suffix if char not in _CONTEXT_NOISE)
 
 
-def _required_override_margin(context_len: int, original_index: int) -> float:
-    """Return the minimum AI score lead required to replace Mozc's top choice.
+def _rank_prior_penalty(original_index: int, max_penalty: float) -> float:
+    """Return a bounded logarithmic Mozc-rank prior.
 
-    A two-character fragment such as ``この`` is weak evidence, so the model
-    must win by a large margin.  Lower Mozc candidates also require stronger
-    evidence before they are promoted all the way to rank 1.
+    Rank still matters, but unlike the old linear `0.1 * index` penalty it can
+    never grow without bound.  With the production max_penalty=0.1, Mozc rank
+    2 pays about 0.02, rank 5 about 0.05, rank 10 about 0.08, and rank 20+
+    saturates at 0.10.  A clear AI score lead can therefore promote any depth.
     """
-    margin = 0.75
-    if context_len <= 2:
-        margin += 3.0
-    elif context_len <= 5:
-        margin += 1.25
-    elif context_len <= 10:
-        margin += 0.35
-    margin += min(max(original_index, 0), 8) * 0.20
-    return margin
+    index = max(0, int(original_index))
+    cap = max(0.0, float(max_penalty))
+    if index == 0 or cap == 0.0:
+        return 0.0
+    normalized = math.log1p(min(index, _RANK_PRIOR_REFERENCE_INDEX)) / math.log1p(
+        _RANK_PRIOR_REFERENCE_INDEX
+    )
+    return cap * normalized
+
+
+def _required_override_margin(context_len: int) -> float:
+    """Minimum score lead over Mozc rank 1 before replacing it.
+
+    Short context keeps a small safety margin, while useful sentence context
+    quickly lowers it.  Candidate depth is already represented by the bounded
+    rank prior and is not charged a second time here.
+    """
+    context_len = max(0, int(context_len))
+    return 0.05 + 0.25 / (1.0 + context_len / 3.0)
 
 
 def _preserve_mozc_top_if_uncertain(
     scored: list[tuple[float, int, str]], prefix: str, suffix: str
 ) -> list[tuple[float, int, str]]:
-    """Keep Mozc rank 1 unless the reranker has enough evidence to override it.
+    """Keep Mozc rank 1 only when the post-prior score lead is genuinely small.
 
-    Context-free calls are reserved for explicit compound-boundary repair in
-    the Mozc rewriter, so those keep the old free-reranking behaviour.
+    Context-free calls are reserved for explicit compound-boundary repair and
+    keep free reranking behaviour.
     """
     if not scored:
         return scored
@@ -81,7 +94,7 @@ def _preserve_mozc_top_if_uncertain(
         return scored
 
     actual_margin = ai_top[0] - mozc_top[0]
-    required_margin = _required_override_margin(context_len, ai_top[1])
+    required_margin = _required_override_margin(context_len)
     if actual_margin >= required_margin:
         return scored
 
@@ -103,7 +116,10 @@ class OnnxRuriReranker:
         model_path: Optional[str | Path] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
-        self.prior_w = prior_w
+        # `prior_w` is now the maximum total Mozc-rank penalty, not a per-rank
+        # multiplier.  This preserves useful Mozc prior information without
+        # making deep candidates impossible to promote.
+        self.prior_w = max(0.0, float(prior_w))
         self.context_enabled = bool(self.settings["context_enabled"])
         self.context_chars = int(self.settings["context_chars"])
         self.document_domain = str(self.settings["document_domain"])
@@ -159,15 +175,24 @@ class OnnxRuriReranker:
         if use_gpu:
             options.enable_mem_pattern = False
             options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
-            self.device = "gpu-directml"
+            requested_providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
         else:
-            providers = ["CPUExecutionProvider"]
-            self.device = "cpu"
-        LOG.info("loading %s with providers=%s", resolved_model, providers)
+            requested_providers = ["CPUExecutionProvider"]
+        LOG.info("loading %s with providers=%s", resolved_model, requested_providers)
         self.session = ort.InferenceSession(
-            str(resolved_model), sess_options=options, providers=providers
+            str(resolved_model), sess_options=options, providers=requested_providers
         )
+        self.providers = tuple(self.session.get_providers())
+        self.device = (
+            "gpu-directml"
+            if "DmlExecutionProvider" in self.providers
+            else "cpu"
+        )
+        if requested == "gpu" and self.device != "gpu-directml":
+            raise RuntimeError(
+                "DirectML provider was requested but the ONNX session did not activate it."
+            )
+        LOG.info("active ONNX providers=%s device=%s", self.providers, self.device)
         self._warmup()
 
     def _encode(self, queries: list[str], documents: list[str]) -> dict[str, np.ndarray]:
@@ -230,10 +255,8 @@ class OnnxRuriReranker:
                 else 0.0
             )
             context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", word)
-            final_score = (
-                raw_score + context_bonus - lexical_penalty
-                - self.prior_w * original_index
-            )
+            rank_penalty = _rank_prior_penalty(original_index, self.prior_w)
+            final_score = raw_score + context_bonus - lexical_penalty - rank_penalty
             scored.append((final_score, original_index, candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
         scored = _preserve_mozc_top_if_uncertain(scored, prefix, suffix)
