@@ -28,6 +28,9 @@ Get-ChildItem -LiteralPath $Overlay -File -Recurse | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
 }
 
+python (Join-Path $RepoRoot 'scripts\modernize_mozc_ui.py') --checkout $Checkout
+if ($LASTEXITCODE -ne 0) { throw 'Mozc modern UI patch failed' }
+
 $Vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $Vswhere)) { throw 'vswhere.exe not found' }
 $VsRoot = (& $Vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.ATLMFC -property installationPath).Trim()
