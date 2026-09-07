@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'mozc/overlay/src/renderer/**'
+      - 'mozc/overlay/src/rewriter/**'
+      - 'scripts/modernize_mozc_ui.py'
+      - 'scripts/prepare_mozc_source.ps1'
       - '.github/workflows/build-modern-ui-msi.yml'
   workflow_dispatch:
 
