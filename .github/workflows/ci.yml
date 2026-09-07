@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
         run: ./scripts/fetch-model.ps1 -VerifyOnly
       - name: Compile Python sources
-        run: python -m compileall -q ai_ime_tray.py ai_ime_gui.py onboarding_ui.py product_settings.py settings_ui.py client ranker tests
+        run: python -m compileall -q ai_ime_tray.py ai_ime_gui.py onboarding_ui.py product_settings.py settings_ui.py client ranker tests scripts/modernize_mozc_ui.py
       - name: Run tests
         env:
           YAMATANA_HEADLESS_TESTS: '1'
