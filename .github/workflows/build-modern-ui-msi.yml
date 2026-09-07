@@ -1,4 +1,4 @@
-name: Build v2.0.3-beta MSI
+name: Build v2.0.4-beta MSI
 
 on:
   push:
@@ -37,19 +37,19 @@ jobs:
         uses: bazel-contrib/setup-bazel@77a1d3d18379c7cb0a7e3b9fcaaa4d94f1029763 # 0.18.0
         with:
           bazelisk-cache: true
-          disk-cache: release-2.0.3-beta
+          disk-cache: release-2.0.4-beta
           repository-cache: true
 
       - name: Build, test and validate unsigned MSI
         shell: pwsh
-        run: ./scripts/build-release.ps1 -ReleaseLabel '2.0.3-beta' -ProductVersion '2.0.3.0'
+        run: ./scripts/build-release.ps1 -ReleaseLabel '2.0.4-beta' -ProductVersion '2.0.4.0'
 
       - name: Upload unsigned release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: yamatana-ai-ime-2.0.3-beta-unsigned
+          name: yamatana-ai-ime-2.0.4-beta-unsigned
           path: |
-            release/Yamatana-AI-IME-MOZC-Ver-2.0.3-beta-x64.msi
+            release/Yamatana-AI-IME-MOZC-Ver-2.0.4-beta-x64.msi
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
