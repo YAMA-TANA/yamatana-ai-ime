@@ -37,7 +37,6 @@ class LexicalKnowledge:
         self.reading_map: Dict[str, Set[str]] = {}
 
         if db_path is None:
-            # Check MEIPASS (PyInstaller bundled), executable dir, and source root
             candidates = [
                 getattr(sys, "_MEIPASS", None) and Path(getattr(sys, "_MEIPASS")) / "data" / "massive_homophone_database.json",
                 Path(sys.executable).parent / "data" / "massive_homophone_database.json",
@@ -64,7 +63,6 @@ class LexicalKnowledge:
     def is_known_word(self, word: str) -> bool:
         if word in self.exact_words:
             return True
-        # Check if single word + productive affix
         for affix in PRODUCTIVE_AFFIXES:
             if word.endswith(affix) and len(word) > len(affix):
                 base = word[:-len(affix)]
@@ -73,23 +71,19 @@ class LexicalKnowledge:
         return False
 
     def compute_lexical_penalty(self, word: str, reading: Optional[str] = None) -> float:
-        """Computes penalty for fragmented non-words (e.g. 週間誌 when 週刊誌 exists)."""
+        """Computes a bounded hint for fragmented non-words."""
         if not word or not reading:
             return 0.0
 
         known_cands = self.reading_map.get(reading, set())
         if not known_cands:
             return 0.0
-
-        # If this exact word is in dictionary for this reading, 0 penalty
         if word in known_cands:
             return 0.0
 
-        # If dictionary has registered 1-word entries for this reading, but candidate is not one of them
-        # (e.g. 週間誌 for しゅうかんし)
         has_exact_registered = any(len(c) == len(word) and c in self.exact_words for c in known_cands)
         if has_exact_registered and not self.is_known_word(word):
-            return 1.5  # Non-lexical compound suppression penalty
+            return 0.40
 
         return 0.0
 
@@ -103,7 +97,7 @@ class RuriReranker:
         base_fallback_path: str | Path = "models/ruri-v3-reranker-310m",
         device: Optional[str] = None,
         w_bidi: float = 1.0,
-        prior_w: float = 0.1,
+        prior_w: float = 0.0,
         enable_lexical_grounding: bool = True,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
@@ -124,7 +118,9 @@ class RuriReranker:
         else:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.w_bidi = w_bidi
-        self.prior_w = prior_w
+        # Retained for caller compatibility. Linear rank damping is no longer
+        # applied; model-score differences remain intact.
+        self.prior_w = float(prior_w)
         self.enable_lexical_grounding = bool(
             enable_lexical_grounding and self.settings["lexical_grounding"]
         )
@@ -133,10 +129,8 @@ class RuriReranker:
         self.document_domain = str(self.settings["document_domain"])
         self.document_instruction = domain_instruction(self.settings)
 
-        # Load Lexicon
         self.lexicon = LexicalKnowledge() if self.enable_lexical_grounding else None
 
-        # Resolve model path across standalone exe and development
         candidates = []
         if getattr(sys, "_MEIPASS", None):
             candidates.append(Path(getattr(sys, "_MEIPASS")) / model_path)
@@ -151,7 +145,6 @@ class RuriReranker:
                 break
 
         if path is None:
-            # Try base fallback
             for cand in [
                 getattr(sys, "_MEIPASS", None) and Path(getattr(sys, "_MEIPASS")) / base_fallback_path,
                 Path(sys.executable).parent / base_fallback_path,
@@ -189,8 +182,6 @@ class RuriReranker:
             ).to(self.device)
 
         self.model.eval()
-
-        # Warmup GPU
         self._warmup()
         logger.info(f"Ruri Reranker initialized successfully on {self.device}.")
 
@@ -228,10 +219,6 @@ class RuriReranker:
             )
         )
 
-        # Score each distinct surface form once, then expand the score back to
-        # every original candidate ID.  Mozc legitimately emits duplicate
-        # surface forms with different metadata/IDs, and the wire protocol
-        # requires the response to contain a complete permutation of all IDs.
         all_candidates = []
         unique_words = []
         word_indexes = {}
@@ -243,7 +230,6 @@ class RuriReranker:
                 word_indexes[w] = len(unique_words)
                 unique_words.append(w)
 
-        # Build Bidirectional Sentence Pairs
         queries = []
         documents = []
         for w in unique_words:
@@ -275,16 +261,12 @@ class RuriReranker:
         scored = []
         for orig_idx, c_id, orig_cand, w in all_candidates:
             raw_s = ai_scores[word_indexes[w]]
-            # Lexical Grounding Penalty
             lex_penalty = 0.0
             if self.lexicon and reading:
                 lex_penalty = self.lexicon.compute_lexical_penalty(w, reading)
-
-            # Prior rank damping tie-breaker
-            prior_penalty = self.prior_w * orig_idx
             context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", w)
 
-            final_score = float(raw_s) + context_bonus - lex_penalty - prior_penalty
+            final_score = float(raw_s) + context_bonus - lex_penalty
             scored.append({
                 "id": c_id,
                 "cand": orig_cand,
@@ -294,7 +276,6 @@ class RuriReranker:
                 "final_score": round(float(final_score), 4),
             })
 
-        # Sort descending by final score
         scored.sort(key=lambda x: x["final_score"], reverse=True)
 
         ranked = []
