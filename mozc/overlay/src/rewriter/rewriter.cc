@@ -30,6 +30,7 @@
 #include "rewriter/rewriter.h"
 
 #include <memory>
+#include <optional>
 
 #include "absl/flags/flag.h"
 #include "base/container/tuple.h"
@@ -128,6 +129,61 @@ ABSL_FLAG(bool, use_history_rewriter, false, "Use history rewriter or not.");
 #endif  // MOZC_USER_HISTORY_REWRITER
 
 namespace mozc {
+namespace {
+
+// Boundary planning must happen before the normal Mozc rewrite pass so the AI
+// can preserve or repair useful word boundaries.  Candidate reranking itself
+// must not happen here: later Mozc rewriters (especially history rewriters)
+// are allowed to reorder candidates and would overwrite the AI result.
+class AiBoundaryPlanner final : public RewriterInterface {
+ public:
+  explicit AiBoundaryPlanner(
+      const dictionary::DictionaryInterface* dictionary)
+      : delegate_(dictionary) {}
+
+  int capability(const ConversionRequest&) const override {
+    return RewriterInterface::NOT_AVAILABLE;
+  }
+
+  std::optional<ResizeSegmentsRequest> CheckResizeSegmentsRequest(
+      const ConversionRequest& request,
+      const Segments& segments) const override {
+    return delegate_.CheckResizeSegmentsRequest(request, segments);
+  }
+
+  bool Rewrite(const ConversionRequest&, Segments*) const override {
+    return false;
+  }
+
+ private:
+  AiRewriter delegate_;
+};
+
+// The final AI pass intentionally participates only in Rewrite().  Running it
+// after every Mozc rewriter makes the ranker's permutation the actual order
+// shown and committed by the IME instead of letting user-history promotion
+// silently restore Mozc's old rank afterwards.
+class FinalAiRewriter final : public RewriterInterface {
+ public:
+  int capability(const ConversionRequest& request) const override {
+    return delegate_.capability(request);
+  }
+
+  std::optional<ResizeSegmentsRequest> CheckResizeSegmentsRequest(
+      const ConversionRequest&, const Segments&) const override {
+    return std::nullopt;
+  }
+
+  bool Rewrite(const ConversionRequest& request,
+               Segments* segments) const override {
+    return delegate_.Rewrite(request, segments);
+  }
+
+ private:
+  AiRewriter delegate_;
+};
+
+}  // namespace
 
 Rewriter::Rewriter(const engine::Modules& modules) {
   const DataManager& data_manager = modules.GetDataManager();
@@ -148,9 +204,9 @@ Rewriter::Rewriter(const engine::Modules& modules) {
   AddRewriter(std::make_unique<EnglishVariantsRewriter>(pos_matcher));
   AddRewriter(make_unique_from_tuples<NumberRewriter>(
       data_manager.GetCounterSuffixSortedArray(), pos_matcher));
-  // Plan or preserve word boundaries before CollocationRewriter can collapse
-  // a phrase and hide useful per-word homophones from the AI ranker.
-  AddRewriter(std::make_unique<AiRewriter>(&dictionary));
+  // Probe boundary repair early, but defer candidate reranking until every
+  // ordinary Mozc rewriter has finished.
+  AddRewriter(std::make_unique<AiBoundaryPlanner>(&dictionary));
   AddRewriter(apply_from_tuples(CollocationRewriter::Create, pos_matcher,
                                 data_manager.GetCollocationData()));
   AddRewriter(std::make_unique<SingleKanjiRewriter>(pos_matcher,
@@ -201,6 +257,11 @@ Rewriter::Rewriter(const engine::Modules& modules) {
   AddRewriter(std::make_unique<RemoveRedundantCandidateRewriter>());
   AddRewriter(make_unique_from_tuples<A11yDescriptionRewriter>(
       data_manager.GetA11yDescriptionRewriterData()));
+
+  // AI candidate order must be the final order consumed by the renderer and
+  // converter.  In the previous placement, UserSegmentHistoryRewriter ran
+  // afterwards and could restore the old Mozc ranking.
+  AddRewriter(std::make_unique<FinalAiRewriter>());
 }
 
 }  // namespace mozc
