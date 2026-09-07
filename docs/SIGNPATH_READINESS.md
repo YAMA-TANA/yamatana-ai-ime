@@ -23,7 +23,7 @@ The AI function is optional and initially disabled. If the AI process is unavail
 The installed IME performs input processing and AI inference locally. It does **not** transmit the following runtime data to an external AI service or telemetry endpoint:
 
 - typed text
-- surrounding/preceeding/following text used as context
+- surrounding/preceding/following text used as context
 - conversion candidates
 - custom instructions
 - dictionary information
