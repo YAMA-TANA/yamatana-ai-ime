@@ -145,3 +145,34 @@ if ('IntersectionObserver' in window) {
 } else {
   reveals.forEach((item) => item.classList.add('visible'));
 }
+
+// Keep transparency and OSS information reachable from the public site without
+// duplicating the full policy text inside the promotional landing page.
+const policyUrl = '/yamatana-ai-ime/oss.html';
+const navLinks = document.querySelector('.nav-links');
+if (navLinks && !navLinks.querySelector('[data-policy-link]')) {
+  const policyLink = document.createElement('a');
+  policyLink.href = policyUrl;
+  policyLink.textContent = 'OSS / Policies';
+  policyLink.dataset.policyLink = 'true';
+  const githubLink = navLinks.querySelector('.nav-github');
+  navLinks.insertBefore(policyLink, githubLink || null);
+}
+
+const privacyLinks = document.querySelector('#privacy .inline-links');
+if (privacyLinks && !privacyLinks.querySelector('[data-policy-link]')) {
+  const policyLink = document.createElement('a');
+  policyLink.href = `${policyUrl}#privacy`;
+  policyLink.textContent = '日本語 / English ポリシー →';
+  policyLink.dataset.policyLink = 'true';
+  privacyLinks.prepend(policyLink);
+}
+
+const footerLinks = document.querySelector('.footer-links');
+if (footerLinks && !footerLinks.querySelector('[data-policy-link]')) {
+  const policyLink = document.createElement('a');
+  policyLink.href = policyUrl;
+  policyLink.textContent = 'OSS / Policies';
+  policyLink.dataset.policyLink = 'true';
+  footerLinks.appendChild(policyLink);
+}
