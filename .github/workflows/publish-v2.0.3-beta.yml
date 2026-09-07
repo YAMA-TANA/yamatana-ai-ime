@@ -1,0 +1,65 @@
+name: Publish v2.0.3-beta
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-v2.0.3-beta.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release metadata
+        uses: actions/checkout@v4
+
+      - name: Download completed v2.0.3-beta build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release
+          gh run download 34111720576 \
+            --repo YAMA-TANA/yamatana-ai-ime \
+            --name yamatana-ai-ime-2.0.3-beta-unsigned \
+            --dir release
+
+      - name: Verify MSI checksum
+        working-directory: release
+        run: sha256sum -c SHA256SUMS.txt
+
+      - name: Prepare release notes
+        run: |
+          cp RELEASE_NOTES_v2.0.3-beta.md release-notes.md
+          MSI_SHA256="$(awk 'NR==1 {print toupper($1)}' release/SHA256SUMS.txt)"
+          printf '\n## SHA-256\n\n`%s`\n' "$MSI_SHA256" >> release-notes.md
+
+      - name: Publish v2.0.3-beta prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.0.3-beta --repo YAMA-TANA/yamatana-ai-ime >/dev/null 2>&1; then
+            gh release edit v2.0.3-beta \
+              --repo YAMA-TANA/yamatana-ai-ime \
+              --target a4006f35bb1a55b9d4bc1acd7602d5ee05309c3d \
+              --title 'Yamatana AI IME v2.0.3-beta' \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create v2.0.3-beta \
+              --repo YAMA-TANA/yamatana-ai-ime \
+              --target a4006f35bb1a55b9d4bc1acd7602d5ee05309c3d \
+              --title 'Yamatana AI IME v2.0.3-beta' \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+
+          gh release upload v2.0.3-beta \
+            release/Yamatana-AI-IME-MOZC-Ver-2.0.3-beta-x64.msi \
+            release/SHA256SUMS.txt \
+            --repo YAMA-TANA/yamatana-ai-ime \
+            --clobber
