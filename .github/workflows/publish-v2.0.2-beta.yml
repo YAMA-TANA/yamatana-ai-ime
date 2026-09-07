@@ -1,0 +1,70 @@
+name: Publish v2.0.2-beta
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-v2.0.2-beta.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download completed v2.0.2-beta build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release
+          gh run download 34097241149 \
+            --repo YAMA-TANA/yamatana-ai-ime \
+            --name yamatana-ai-ime-2.0.2-beta-modern-ui-unsigned \
+            --dir release
+
+      - name: Verify MSI checksum
+        working-directory: release
+        run: sha256sum -c SHA256SUMS.txt
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          # Yamatana AI IME v2.0.2-beta
+
+          v2.0.1-beta の変換ロジックを引き継ぎつつ、Mozc由来の候補ウィンドウを中心にUIを刷新したBetaです。
+
+          ## 主な変更
+
+          - 候補ウィンドウ全体を角丸化し、Windows 11に馴染む見た目へ調整しました。
+          - 選択中の候補を、全面塗りつぶしではなく角丸の選択カードとして表示します。
+          - 余白、文字サイズ、補助説明、スクロールバー、フッターの色と密度を見直しました。
+          - Mozc由来の候補ウィンドウ内ロゴ表示を外し、よりシンプルな見た目にしました。
+          - AIによって1位へ再ランキングされた候補には、小さな `AI` 表示を付けるためのUIを追加しました。
+          - DPIスケーリングを考慮し、高DPI環境でも角丸や余白が極端に崩れにくいようにしています。
+          - Mozc取得後にUI差分を自動適用するビルド工程を追加し、GitHub Actionsから同じ構成を再現できるようにしました。
+
+          ## 変換エンジンについて
+
+          70MのローカルAI rerankerと、v2.0.1-betaで追加したconfidence gate / segment repairの考え方は継続しています。入力内容や文脈を外部AIサービスへ送信する設計ではありません。
+
+          ## 注意
+
+          **Unsigned Beta:** このMSIはまだコード署名されていません。Windowsの警告が表示される場合があります。インストール前に同梱の `SHA256SUMS.txt` でハッシュを確認してください。
+
+          MSI SHA-256:
+
+          `376CDEAE235C620100DA06D389B0B52BF383DA81EC45195D7FFE367178A12A2F`
+          EOF
+
+          gh release create v2.0.2-beta \
+            release/Yamatana-AI-IME-MOZC-Ver-2.0.2-beta-x64.msi \
+            release/SHA256SUMS.txt \
+            --repo YAMA-TANA/yamatana-ai-ime \
+            --target a49c1b407ec41f1484db92c2c8372d74eb0f1c29 \
+            --title 'Yamatana AI IME v2.0.2-beta' \
+            --notes-file release-notes.md \
+            --prerelease
