@@ -1,4 +1,4 @@
-name: Build modern UI MSI
+name: Build v2.0.3-beta MSI
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
     paths:
       - 'mozc/overlay/src/renderer/**'
       - 'mozc/overlay/src/rewriter/**'
+      - 'ranker/**'
+      - 'product_settings.py'
+      - 'requirements-runtime.txt'
+      - 'tests/test_rerank_safety.py'
       - 'scripts/modernize_mozc_ui.py'
       - 'scripts/prepare_mozc_source.ps1'
       - '.github/workflows/build-modern-ui-msi.yml'
@@ -33,19 +37,19 @@ jobs:
         uses: bazel-contrib/setup-bazel@77a1d3d18379c7cb0a7e3b9fcaaa4d94f1029763 # 0.18.0
         with:
           bazelisk-cache: true
-          disk-cache: modern-ui-2.0.2-beta
+          disk-cache: release-2.0.3-beta
           repository-cache: true
 
-      - name: Build, test and validate modern UI MSI
+      - name: Build, test and validate unsigned MSI
         shell: pwsh
-        run: ./scripts/build-release.ps1 -ReleaseLabel '2.0.2-beta' -ProductVersion '2.0.2.0'
+        run: ./scripts/build-release.ps1 -ReleaseLabel '2.0.3-beta' -ProductVersion '2.0.3.0'
 
-      - name: Upload modern UI release artifact
+      - name: Upload unsigned release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: yamatana-ai-ime-2.0.2-beta-modern-ui-unsigned
+          name: yamatana-ai-ime-2.0.3-beta-unsigned
           path: |
-            release/Yamatana-AI-IME-MOZC-Ver-2.0.2-beta-x64.msi
+            release/Yamatana-AI-IME-MOZC-Ver-2.0.3-beta-x64.msi
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
