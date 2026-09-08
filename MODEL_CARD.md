@@ -7,13 +7,16 @@ Yamatana AI IME v2の変換候補再順位付け用モデルです。`cl-nagoya/
 ## Version and provenance
 
 ### 1. Standard Distilled Model (Recommended: 70M Series)
-- Bundle version: `v2.0.0-beta-70m`
+- Bundle version: `v2.0.5-beta-70m`
 - Student model: `cl-nagoya/ruri-v3-70m` (ModernBERT architecture, 70.1M parameters, 22.3% size of teacher)
 - Distillation: Margin-MSE + Soft KL + Hard Margin compound distillation from 310M teacher
 - Fine-tuning data: 38,355 contextual pairs (including cultural agency homophone verbs and IT inference/implementation contexts)
 - Export: ONNX opset 18
 - CPU artifact: Dynamic INT8 (`ruri-ime-int8.onnx`, **67.76 MB**)
 - GPU artifact: DirectML FP16 (`ruri-ime-fp16.onnx`, **134.11 MB**)
+- Artifact refresh: the 70M ONNX and tokenizer artifacts shipped in this release
+  were refreshed on 2026-09-08; exact file hashes are pinned in
+  `model-manifest.json`.
 - Validation agreement with teacher: **99.85%** (Task val acc: 99.75%)
 
 ### 2. High-Capacity Model (310M Series)

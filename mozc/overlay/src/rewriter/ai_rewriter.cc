@@ -30,6 +30,9 @@ using Clock = std::chrono::steady_clock;
 
 constexpr size_t kBoundaryDictionaryLimit = 6;
 constexpr size_t kBoundaryRepairLimit = 12;
+constexpr size_t kAiCandidateSurfaceLimit = 8;
+constexpr size_t kSupplementalCandidateSurfaceLimit = 8;
+constexpr size_t kMinInternalPhraseContextChars = 4;
 constexpr int kBoundaryProbeTimeoutMs = 700;
 constexpr double kBoundaryRepairMargin = 0.60;
 
@@ -142,6 +145,85 @@ std::vector<SurfaceOption> BuildSplitSurfaces(
   return combined;
 }
 
+// These are deliberately small, high-value supplements.  Mozc's dictionary
+// remains the source of truth for ordinary words; this table only repairs
+// numeric/abbreviation spans that the converter commonly splits before the
+// AI rewriter gets a chance to compare them as one phrase.
+struct SupplementalSurfaceSpec {
+  const char* reading;
+  const char* surface;
+};
+
+const std::vector<SupplementalSurfaceSpec>& SupplementalSurfaceSpecs() {
+  static const std::vector<SupplementalSurfaceSpec> kSpecs = {
+      {"えーぴーあい", "API"},
+      {"えーぴーあいれんけい", "API連携"},
+      {"けんしん", "健診"},
+      {"じゅうごにち", "15日"},
+      {"にせんにじゅうろくねんど", "2026年度"},
+      {"じゅっこ", "10個"},
+      {"さんじ", "3時"},
+      {"ごにん", "5人"},
+      {"だいごい", "第5位"},
+      {"いちい", "1位"},
+  };
+  return kSpecs;
+}
+
+std::vector<std::string> SupplementalSurfacesForReading(
+    absl::string_view reading) {
+  std::vector<std::string> result;
+  size_t longest_bytes = 0;
+  const char* selected_surface = nullptr;
+  for (const SupplementalSurfaceSpec& spec : SupplementalSurfaceSpecs()) {
+    const absl::string_view key(spec.reading);
+    if (reading.size() < key.size() ||
+        reading.substr(0, key.size()) != key || key.size() <= longest_bytes) {
+      continue;
+    }
+    longest_bytes = key.size();
+    selected_surface = spec.surface;
+  }
+  if (selected_surface != nullptr) {
+    result.emplace_back(selected_surface);
+    result.back().append(reading.substr(longest_bytes).data(),
+                         reading.substr(longest_bytes).size());
+  }
+  return result;
+}
+
+size_t SupplementalPrefixChars(absl::string_view reading) {
+  size_t longest_bytes = 0;
+  for (const SupplementalSurfaceSpec& spec : SupplementalSurfaceSpecs()) {
+    const absl::string_view key(spec.reading);
+    if (reading.size() >= key.size() &&
+        reading.substr(0, key.size()) == key) {
+      longest_bytes = std::max(longest_bytes, key.size());
+    }
+  }
+  if (longest_bytes == 0) return 0;
+  return Util::CharsLen(reading.substr(0, longest_bytes));
+}
+
+void AddSupplementalCandidates(converter::Segment* segment) {
+  if (segment == nullptr || segment->candidates_size() == 0) return;
+  const std::vector<std::string> supplements =
+      SupplementalSurfacesForReading(segment->key());
+  for (const std::string& value : supplements) {
+    if (SegmentContainsSurface(*segment, value)) continue;
+    converter::Candidate* candidate = segment->add_candidate();
+    *candidate = segment->candidate(0);
+    candidate->key = std::string(segment->key());
+    candidate->content_key = candidate->key;
+    candidate->value = value;
+    candidate->content_value = value;
+    candidate->attributes |= converter::Attribute::SUPPLEMENTAL_MODEL |
+                             converter::Attribute::NO_LEARNING;
+    candidate->cost += 100000;
+    candidate->wcost += 100000;
+  }
+}
+
 std::string SegmentTopSurface(const converter::Segment& segment) {
   if (segment.candidates_size() > 0) {
     return std::string(segment.candidate(0).value);
@@ -163,6 +245,25 @@ std::string FullReading(const Segments& segments) {
     reading.append(segment.key().data(), segment.key().size());
   }
   return reading;
+}
+
+std::string ContextBeforeSegment(const Segments& segments, size_t index,
+                                 absl::string_view document_prefix) {
+  std::string context(document_prefix);
+  for (size_t i = 0; i < index; ++i) {
+    context.append(SegmentTopSurface(segments.conversion_segment(i)));
+  }
+  return context;
+}
+
+std::string ContextAfterSegment(const Segments& segments, size_t index,
+                                absl::string_view document_suffix) {
+  std::string context;
+  for (size_t i = index + 1; i < segments.conversion_segments_size(); ++i) {
+    context.append(SegmentTopSurface(segments.conversion_segment(i)));
+  }
+  context.append(document_suffix.data(), document_suffix.size());
+  return context;
 }
 
 std::vector<std::string> RepairValues(
@@ -218,38 +319,133 @@ bool BoundaryRepairWins(const ai_ranker::Client& client,
   return ranked.front().score - baseline_it->score >= kBoundaryRepairMargin;
 }
 
-bool ApplyPermutation(converter::Segment* segment,
-                      const std::vector<ai_ranker::RankedCandidate>& ranked,
-                      size_t limit) {
+bool ParseCandidateId(absl::string_view id, size_t candidate_count,
+                      size_t* index) {
+  if (index == nullptr || id.size() < 2 || id[0] != 'c') return false;
+  size_t parsed = 0;
+  for (size_t pos = 1; pos < id.size(); ++pos) {
+    const char c = id[pos];
+    if (c < '0' || c > '9') return false;
+    parsed = parsed * 10 + static_cast<size_t>(c - '0');
+    if (parsed >= candidate_count) return false;
+  }
+  *index = parsed;
+  return true;
+}
+
+std::vector<size_t> SelectDistinctCandidateSurfaces(
+    const converter::Segment& segment) {
+  std::vector<size_t> selected;
+  std::vector<size_t> supplemental;
+  std::vector<std::string> surfaces;
+  selected.reserve(kAiCandidateSurfaceLimit);
+  supplemental.reserve(kSupplementalCandidateSurfaceLimit);
+  surfaces.reserve(kAiCandidateSurfaceLimit);
+  for (size_t i = 0; i < segment.candidates_size(); ++i) {
+    const std::string value(segment.candidate(i).value);
+    if (std::find(surfaces.begin(), surfaces.end(), value) != surfaces.end()) {
+      continue;
+    }
+    if (segment.candidate(i).attributes &
+        converter::Attribute::SUPPLEMENTAL_MODEL) {
+      supplemental.push_back(i);
+      continue;
+    }
+    if (selected.size() >= kAiCandidateSurfaceLimit) continue;
+    selected.push_back(i);
+    surfaces.push_back(value);
+  }
+  for (const size_t index : supplemental) {
+    if (selected.size() >=
+        kAiCandidateSurfaceLimit + kSupplementalCandidateSurfaceLimit) {
+      break;
+    }
+    const std::string value(segment.candidate(index).value);
+    if (std::find(surfaces.begin(), surfaces.end(), value) != surfaces.end()) {
+      continue;
+    }
+    selected.push_back(index);
+    surfaces.push_back(value);
+  }
+  return selected;
+}
+
+size_t SharedCandidateContextChars(absl::string_view left,
+                                   absl::string_view right) {
+  const std::vector<std::string> left_chars =
+      Util::SplitStringToUtf8Chars(left);
+  const std::vector<std::string> right_chars =
+      Util::SplitStringToUtf8Chars(right);
+  const size_t limit = std::min(left_chars.size(), right_chars.size());
+  size_t prefix = 0;
+  while (prefix < limit && left_chars[prefix] == right_chars[prefix]) {
+    ++prefix;
+  }
+  size_t suffix = 0;
+  while (suffix < limit - prefix &&
+         left_chars[left_chars.size() - 1 - suffix] ==
+             right_chars[right_chars.size() - 1 - suffix]) {
+    ++suffix;
+  }
+  return prefix + suffix;
+}
+
+bool HasCandidateInternalPhraseContext(const converter::Segment& segment) {
+  if (segment.candidates_size() < 2) return false;
+  const std::vector<size_t> selected =
+      SelectDistinctCandidateSurfaces(segment);
+  if (selected.size() < 2) return false;
+  const std::string baseline(segment.candidate(selected[0]).value);
+  for (size_t position = 1; position < selected.size(); ++position) {
+    if (SharedCandidateContextChars(
+            baseline, segment.candidate(selected[position]).value) >=
+        kMinInternalPhraseContextChars) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ApplySelectedPermutation(
+    converter::Segment* segment,
+    const std::vector<ai_ranker::RankedCandidate>& ranked,
+    const std::vector<size_t>& selected_indices) {
+  if (segment == nullptr || ranked.size() != selected_indices.size()) {
+    return false;
+  }
+  const size_t candidate_count = segment->candidates_size();
   std::vector<size_t> desired;
-  desired.reserve(limit);
-  std::vector<bool> seen(limit, false);
+  desired.reserve(candidate_count);
+  std::vector<bool> seen(candidate_count, false);
   for (size_t rank = 0; rank < ranked.size(); ++rank) {
     const std::string& id = ranked[rank].id;
-    if (id.size() < 2 || id[0] != 'c') return false;
     size_t index = 0;
-    for (size_t pos = 1; pos < id.size(); ++pos) {
-      const char c = id[pos];
-      if (c < '0' || c > '9') return false;
-      index = index * 10 + static_cast<size_t>(c - '0');
-      if (index >= limit) return false;
-    }
+    if (!ParseCandidateId(id, candidate_count, &index)) return false;
     if (seen[index] || ranked[rank].rank != static_cast<int>(rank + 1)) {
+      return false;
+    }
+    if (std::find(selected_indices.begin(), selected_indices.end(), index) ==
+        selected_indices.end()) {
       return false;
     }
     seen[index] = true;
     desired.push_back(index);
   }
-  for (bool value : seen) {
-    if (!value) return false;
+  for (size_t index : selected_indices) {
+    if (index >= candidate_count || !seen[index]) return false;
+  }
+  // Ranked representatives go first.  Duplicate surfaces and candidates below
+  // the neural comparison window retain their original relative order.
+  for (size_t i = 0; i < candidate_count; ++i) {
+    if (!seen[i]) desired.push_back(i);
   }
 
   const bool top_promoted = !desired.empty() && desired[0] != 0;
-  std::vector<size_t> current_ids(limit);
-  for (size_t i = 0; i < limit; ++i) current_ids[i] = i;
+  std::vector<size_t> current_ids(candidate_count);
+  for (size_t i = 0; i < candidate_count; ++i) current_ids[i] = i;
   std::vector<std::pair<int, int>> moves;
-  moves.reserve(limit);
-  for (size_t target = 0; target < limit; ++target) {
+  moves.reserve(candidate_count);
+  for (size_t target = 0; target < candidate_count; ++target) {
     const auto current_it =
         std::find(current_ids.begin() + target, current_ids.end(),
                   desired[target]);
@@ -293,7 +489,7 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
     return std::nullopt;
   }
   const size_t count = segments.conversion_segments_size();
-  if (count == 0 || count > 4 || dictionary_ == nullptr) {
+  if (count == 0 || count > 6 || dictionary_ == nullptr) {
     return std::nullopt;
   }
 
@@ -353,6 +549,22 @@ AiRewriter::CheckResizeSegmentsRequest(const ConversionRequest& request,
             static_cast<uint8_t>(key_chars - split_chars), 0, 0, 0, 0, 0, 0},
     };
     return resize_request;
+  }
+
+  // Numeric/abbreviation supplements may span two as well as three or more
+  // Mozc segments (e.g. じゅう + ご + にち, or API + 連携).  Resize only the
+  // recognized prefix so trailing particles/verbs remain independently
+  // convertible.
+  {
+    const std::string reading = FullReading(segments);
+    const size_t supplemental_prefix_chars = SupplementalPrefixChars(reading);
+    if (supplemental_prefix_chars > 0 &&
+        supplemental_prefix_chars <= kMaxCompoundChars) {
+      ResizeSegmentsRequest resize_request = {.segment_index = 0};
+      resize_request.segment_sizes[0] =
+          static_cast<uint8_t>(supplemental_prefix_chars);
+      return resize_request;
+    }
   }
 
   if (count != 2) return std::nullopt;
@@ -430,12 +642,17 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   const std::string trailing_text(request.context().following_text());
   const bool has_in_composition_context =
       !trailing_text.empty() || segments->conversion_segments_size() > 1;
+  const bool has_internal_phrase_context =
+      segments->conversion_segments_size() == 1 &&
+      HasCandidateInternalPhraseContext(segments->conversion_segment(0));
   // Preserve the conservative single-word/no-context behavior, but do not
   // disable AI for an entire sentence just because nothing was committed
-  // before the current composition.  Later conversion segments provide real
-  // following context to the first segment and accumulated context thereafter.
+  // before the current composition.  Later conversion segments, or the
+  // competing whole-phrase surfaces of a long collapsed segment, provide real
+  // context even when the host application exposes no surrounding document
+  // text.
   if (preceding_text.empty() && !segments->resized() &&
-      !has_in_composition_context) {
+      !has_in_composition_context && !has_internal_phrase_context) {
     return false;
   }
 
@@ -453,61 +670,58 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   const Clock::time_point deadline =
       Clock::now() + std::chrono::milliseconds(ai_ranker::kDefaultTimeoutMs);
   ai_ranker::Client client(pipe_name_);
-  std::string accumulated = preceding_text;
   bool any_reordered = false;
 
-  for (size_t index = 0; index < segments->conversion_segments_size();
-       ++index) {
+  // Work from the caret/back of the composition.  A single slow segment must
+  // not consume the shared conversion deadline before the user's most recent
+  // text gets considered.  Context is rebuilt from the current candidate-zero
+  // surfaces on every iteration, so earlier segments also see any successful
+  // promotion already made to their right.
+  for (size_t reverse = segments->conversion_segments_size(); reverse > 0;
+       --reverse) {
+    const size_t index = reverse - 1;
     converter::Segment* segment = segments->mutable_conversion_segment(index);
     if (segment == nullptr || !IsRerankableSegment(*segment)) {
       continue;
     }
     if (segment->candidates_size() < 2) {
-      accumulated.append(std::string(segment->key().data(),
-                                     segment->key().size()));
       continue;
     }
 
-    const size_t limit = segment->candidates_size();
+    AddSupplementalCandidates(segment);
+
+    const std::vector<size_t> selected_indices =
+        SelectDistinctCandidateSurfaces(*segment);
+    const size_t limit = selected_indices.size();
+    if (limit < 2) continue;
     std::vector<ai_ranker::CandidateInput> input;
     input.reserve(limit);
-    for (size_t i = 0; i < limit; ++i) {
-      const converter::Candidate& candidate = segment->candidate(i);
-      input.push_back({"c" + std::to_string(i), candidate.value,
-                       static_cast<int>(i + 1)});
+    for (size_t index : selected_indices) {
+      const converter::Candidate& candidate = segment->candidate(index);
+      input.push_back({"c" + std::to_string(index), candidate.value,
+                       static_cast<int>(input.size() + 1)});
     }
 
-    std::string following_text = trailing_text;
-    for (size_t later = index + 1;
-         later < segments->conversion_segments_size(); ++later) {
-      const converter::Segment& later_seg = segments->conversion_segment(later);
-      if (later_seg.candidates_size() == 0) {
-        continue;
-      }
-      following_text.append(
-          std::string(later_seg.candidate(0).value.data(),
-                      later_seg.candidate(0).value.size()));
-    }
+    const std::string segment_prefix =
+        ContextBeforeSegment(*segments, index, preceding_text);
+    const std::string following_text =
+        ContextAfterSegment(*segments, index, trailing_text);
 
     const int remaining_ms = RemainingBudgetMs(deadline);
     if (remaining_ms <= 0) break;
 
     std::vector<ai_ranker::RankedCandidate> ranked;
     const bool rank_ok = client.Rank(
-        accumulated, following_text,
+        segment_prefix, following_text,
         std::string(segment->key().data(), segment->key().size()), input,
         remaining_ms, &ranked);
     if (!rank_ok || ranked.size() != limit) {
-      accumulated.append(std::string(segment->candidate(0).value.data(),
-                                     segment->candidate(0).value.size()));
       continue;
     }
 
-    if (ApplyPermutation(segment, ranked, limit)) {
+    if (ApplySelectedPermutation(segment, ranked, selected_indices)) {
       any_reordered = true;
     }
-    accumulated.append(std::string(segment->candidate(0).value.data(),
-                                   segment->candidate(0).value.size()));
   }
 
   return any_reordered;

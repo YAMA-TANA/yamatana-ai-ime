@@ -555,7 +555,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             load_started = time.perf_counter()
             product_settings = load_settings(args.settings_file)
             ranker = OnnxRuriReranker(
-                prior_w=0.1,
                 settings=product_settings,
             )
             LOG.info(
@@ -574,7 +573,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             load_started = time.perf_counter()
             product_settings = load_settings(args.settings_file)
             ranker = RuriReranker(
-                prior_w=0.1,
                 enable_lexical_grounding=True,
                 device=args.device,
                 settings=product_settings,
