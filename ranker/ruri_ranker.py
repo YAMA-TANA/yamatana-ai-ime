@@ -17,9 +17,35 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from product_settings import domain_instruction, load_settings, normalize_settings
 try:
-    from .lexicon import contextual_candidate_bonus
+    from .scoring import (
+        DEFAULT_RANK_PRIOR_WEIGHT,
+        HIGH_CONFIDENCE_MARGIN,
+        MIN_KANA_SWITCH_DELTA,
+        MIN_KANA_SWITCH_MARGIN,
+        MIN_SWITCH_DELTA,
+        MIN_SWITCH_MARGIN,
+        contextual_candidate_bonus,
+        orthographic_style_bonus,
+        preserve_mozc_top_if_uncertain,
+        reading_identity_penalty,
+        rank_prior_penalty,
+        select_local_context,
+    )
 except ImportError:
-    from lexicon import contextual_candidate_bonus
+    from scoring import (
+        DEFAULT_RANK_PRIOR_WEIGHT,
+        HIGH_CONFIDENCE_MARGIN,
+        MIN_KANA_SWITCH_DELTA,
+        MIN_KANA_SWITCH_MARGIN,
+        MIN_SWITCH_DELTA,
+        MIN_SWITCH_MARGIN,
+        contextual_candidate_bonus,
+        orthographic_style_bonus,
+        preserve_mozc_top_if_uncertain,
+        reading_identity_penalty,
+        rank_prior_penalty,
+        select_local_context,
+    )
 
 logger = logging.getLogger("ai_ime.ruri_ranker")
 
@@ -103,7 +129,7 @@ class RuriReranker:
         base_fallback_path: str | Path = "models/ruri-v3-reranker-310m",
         device: Optional[str] = None,
         w_bidi: float = 1.0,
-        prior_w: float = 0.1,
+        prior_w: float = DEFAULT_RANK_PRIOR_WEIGHT,
         enable_lexical_grounding: bool = True,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
@@ -218,8 +244,7 @@ class RuriReranker:
             prefix = ""
             suffix = ""
         else:
-            prefix = str(prefix)[-context_chars:]
-            suffix = str(suffix)[:context_chars]
+            prefix, suffix = select_local_context(prefix, suffix, context_chars)
         instruction = str(
             getattr(
                 self,
@@ -273,6 +298,8 @@ class RuriReranker:
                 ai_scores = [ai_scores]
 
         scored = []
+        evidence_scores = {}
+        candidate_texts = [str(item[3]) for item in all_candidates]
         for orig_idx, c_id, orig_cand, w in all_candidates:
             raw_s = ai_scores[word_indexes[w]]
             # Lexical Grounding Penalty
@@ -280,11 +307,16 @@ class RuriReranker:
             if self.lexicon and reading:
                 lex_penalty = self.lexicon.compute_lexical_penalty(w, reading)
 
-            # Prior rank damping tie-breaker
-            prior_penalty = self.prior_w * orig_idx
-            context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", w)
-
-            final_score = float(raw_s) + context_bonus - lex_penalty - prior_penalty
+            style_bonus = orthographic_style_bonus(str(w), candidate_texts)
+            context_bonus = contextual_candidate_bonus(prefix, suffix, str(w))
+            reading_penalty = reading_identity_penalty(str(w), reading, candidate_texts)
+            evidence_score = (
+                float(raw_s) + style_bonus + context_bonus
+                - lex_penalty - reading_penalty
+            )
+            evidence_scores[c_id] = evidence_score
+            prior_penalty = rank_prior_penalty(orig_idx, self.prior_w)
+            final_score = evidence_score - prior_penalty
             scored.append({
                 "id": c_id,
                 "cand": orig_cand,
@@ -296,6 +328,25 @@ class RuriReranker:
 
         # Sort descending by final score
         scored.sort(key=lambda x: x["final_score"], reverse=True)
+        tuple_order = [
+            (float(item["final_score"]), int(item["orig_idx"]), str(item["id"]))
+            for item in scored
+        ]
+        tuple_order = preserve_mozc_top_if_uncertain(
+            tuple_order,
+            prefix,
+            suffix,
+            evidence_scores,
+            {str(item["id"]): str(item["word"]) for item in scored},
+            reading,
+        )
+        output_positions = {
+            candidate_id: position
+            for position, (_score, _original_index, candidate_id) in enumerate(
+                tuple_order
+            )
+        }
+        scored.sort(key=lambda item: output_positions[str(item["id"])])
 
         ranked = []
         for r_idx, item in enumerate(scored):

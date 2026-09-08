@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import os
 import sys
 import time
@@ -15,11 +14,33 @@ import onnxruntime as ort
 from tokenizers import Tokenizer
 
 from product_settings import domain_instruction, load_settings, normalize_settings
-from ranker.lexicon import LexicalKnowledge, contextual_candidate_bonus
+from ranker.lexicon import LexicalKnowledge
+from ranker.scoring import (
+    ARABIC_NUMERAL_STYLE_BONUS,
+    CONTEXTUAL_LEAD_OVER_MOZC,
+    CONTEXTUAL_NEURAL_CONFIDENCE,
+    DEFAULT_RANK_PRIOR_WEIGHT,
+    HIGH_CONFIDENCE_MARGIN,
+    HIGH_NEURAL_CONFIDENCE,
+    MIN_EXTERNAL_CONTEXT_SIGNAL,
+    MIN_INTERNAL_CONTEXT_SIGNAL,
+    MIN_KANA_SWITCH_DELTA,
+    MIN_KANA_SWITCH_MARGIN,
+    MIN_SWITCH_DELTA,
+    MIN_SWITCH_MARGIN,
+    context_signal_length as _context_signal_length,
+    contextual_candidate_bonus,
+    reading_identity_penalty,
+    neural_top_probability as _neural_top_probability,
+    orthographic_style_bonus,
+    preserve_mozc_top_if_uncertain as _preserve_mozc_top_if_uncertain,
+    rank_prior_penalty as _rank_prior_penalty,
+    select_local_context,
+    shared_candidate_context_length as _shared_candidate_context_length,
+)
 
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
-_CONTEXT_NOISE = set(" \t\r\n、。,.!?！？「」『』（）()［］[]【】{}・:：;；")
 
 
 def _runtime_roots() -> list[Path]:
@@ -39,91 +60,6 @@ def _resolve_first(relative_paths: tuple[str, ...]) -> Optional[Path]:
     return None
 
 
-def _context_signal_length(prefix: str, suffix: str) -> int:
-    """Approximate how much real linguistic evidence surrounds the conversion."""
-    return sum(1 for char in prefix + suffix if char not in _CONTEXT_NOISE)
-
-
-def _rank_prior_penalty(original_index: int, prior_w: float) -> float:
-    """Return a soft Mozc-rank prior without making deep candidates impossible.
-
-    Mozc's order is useful evidence, but it can also contain strong user-history
-    effects.  A linear ``weight * rank`` term double-counted that history and
-    made a candidate at rank 10 or 20 almost impossible to recover.  Logarithmic
-    damping keeps a real prior while allowing a clear neural score gap to win.
-    """
-    return float(prior_w) * math.log1p(max(int(original_index), 0))
-
-
-def _required_override_margin(context_len: int) -> float:
-    """Minimum neural-evidence lead required to replace Mozc's top choice.
-
-    The threshold depends on context quality, not on how far down Mozc placed
-    the challenger.  Mozc rank already contributes through the soft prior, so
-    adding another rank-dependent gate would amplify user-frequency bias twice.
-    """
-    if context_len <= 2:
-        return 0.85
-    if context_len <= 5:
-        return 0.50
-    if context_len <= 10:
-        return 0.30
-    return 0.20
-
-
-def _preserve_mozc_top_if_uncertain(
-    scored: list[tuple[float, int, str]],
-    prefix: str,
-    suffix: str,
-    evidence_scores: Optional[Mapping[str, float]] = None,
-) -> list[tuple[float, int, str]]:
-    """Keep Mozc rank 1 only when the AI score gap is genuinely ambiguous.
-
-    ``scored`` is ordered by the combined score (AI evidence minus the soft
-    Mozc prior).  Promotion confidence is judged using the AI evidence before
-    the rank prior, so a stale user-history rank cannot become an absolute veto.
-    Context-free calls are reserved for explicit compound-boundary repair and
-    keep free reranking behaviour.
-    """
-    if not scored:
-        return scored
-    context_len = _context_signal_length(prefix, suffix)
-    if context_len == 0:
-        return scored
-
-    mozc_top = next((item for item in scored if item[1] == 0), None)
-    ai_top = scored[0]
-    if mozc_top is None or ai_top[1] == 0:
-        return scored
-
-    evidence = evidence_scores or {item[2]: item[0] for item in scored}
-    ai_evidence = float(evidence.get(ai_top[2], ai_top[0]))
-    mozc_evidence = float(evidence.get(mozc_top[2], mozc_top[0]))
-    other_evidence = [
-        float(evidence.get(item[2], item[0]))
-        for item in scored[1:]
-    ]
-    runner_evidence = max(other_evidence) if other_evidence else mozc_evidence
-
-    lead_over_mozc = ai_evidence - mozc_evidence
-    lead_over_runner = ai_evidence - runner_evidence
-    required_margin = _required_override_margin(context_len)
-    required_runner_gap = 0.12 if context_len <= 5 else 0.08
-
-    if (
-        lead_over_mozc >= required_margin
-        and lead_over_runner >= required_runner_gap
-    ):
-        return scored
-
-    LOG.debug(
-        "preserving Mozc top: ai_index=%s lead_mozc=%.3f lead_runner=%.3f "
-        "required=%.3f context_len=%s",
-        ai_top[1], lead_over_mozc, lead_over_runner, required_margin, context_len,
-    )
-    return [mozc_top] + [item for item in scored if item is not mozc_top]
-
-
 class OnnxRuriReranker:
     """Ruri IME reranker without a Python, PyTorch, or CUDA prerequisite."""
 
@@ -131,7 +67,7 @@ class OnnxRuriReranker:
         self,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
-        prior_w: float = 0.18,
+        prior_w: float = DEFAULT_RANK_PRIOR_WEIGHT,
         model_path: Optional[str | Path] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
@@ -246,8 +182,9 @@ class OnnxRuriReranker:
             prefix = ""
             suffix = ""
         else:
-            prefix = prefix[-self.context_chars :]
-            suffix = suffix[: self.context_chars]
+            prefix, suffix = select_local_context(
+                prefix, suffix, self.context_chars
+            )
 
         all_candidates = []
         for index, candidate in enumerate(candidates):
@@ -267,6 +204,8 @@ class OnnxRuriReranker:
 
         scored: list[tuple[float, int, str]] = []
         evidence_scores: dict[str, float] = {}
+        score_details: dict[str, dict[str, float | int | str]] = {}
+        candidate_texts = [word for _index, _candidate_id, word in all_candidates]
         for original_index, candidate_id, word in all_candidates:
             raw_score = float(logits[original_index])
             lexical_penalty = (
@@ -274,20 +213,118 @@ class OnnxRuriReranker:
                 if self.lexicon and reading
                 else 0.0
             )
-            context_bonus = contextual_candidate_bonus(f"{prefix} {suffix}", word)
-            evidence_score = raw_score + context_bonus - lexical_penalty
+            style_bonus = orthographic_style_bonus(word, candidate_texts)
+            context_bonus = contextual_candidate_bonus(prefix, suffix, word)
+            reading_penalty = reading_identity_penalty(word, reading, candidate_texts)
+            evidence_score = (
+                raw_score + style_bonus + context_bonus
+                - lexical_penalty - reading_penalty
+            )
             prior_penalty = _rank_prior_penalty(original_index, self.prior_w)
             final_score = evidence_score - prior_penalty
             evidence_scores[candidate_id] = float(evidence_score)
             scored.append((float(final_score), original_index, candidate_id))
+            score_details[candidate_id] = {
+                "id": candidate_id,
+                "text": word,
+                "original_rank": original_index + 1,
+                "model_score": float(raw_score),
+                "style_bonus": float(style_bonus),
+                "context_bonus": float(context_bonus),
+                "lexical_penalty": float(lexical_penalty),
+                "reading_identity_penalty": float(reading_penalty),
+                "rank_prior_penalty": float(prior_penalty),
+                "evidence_score": float(evidence_score),
+                "final_score": float(final_score),
+            }
 
         # Mozc rank is only a soft prior.  For exact score ties the stable
         # original order is retained, but a clear AI evidence gap can promote
         # a deep candidate without paying a linearly growing rank tax.
         scored.sort(key=lambda item: item[0], reverse=True)
-        scored = _preserve_mozc_top_if_uncertain(
-            scored, prefix, suffix, evidence_scores
+        neural_top_id = scored[0][2]
+        mozc_top_id = next(item[2] for item in scored if item[1] == 0)
+        lead_over_mozc = None
+        lead_over_runner = None
+        if neural_top_id != mozc_top_id:
+            lead_over_mozc = (
+                evidence_scores[neural_top_id] - evidence_scores[mozc_top_id]
+            )
+            runner_evidence = max(
+                evidence_scores[item[2]] for item in scored[1:]
+            )
+            lead_over_runner = evidence_scores[neural_top_id] - runner_evidence
+        candidate_text_by_id = {
+            candidate_id: word for _index, candidate_id, word in all_candidates
+        }
+        internal_context_len = _shared_candidate_context_length(
+            candidate_text_by_id[neural_top_id], candidate_text_by_id[mozc_top_id]
         )
+        neural_confidence = _neural_top_probability(evidence_scores, neural_top_id)
+        pre_gate_scored = list(scored)
+        scored = _preserve_mozc_top_if_uncertain(
+            scored,
+            prefix,
+            suffix,
+            evidence_scores,
+            candidate_text_by_id,
+            reading,
+        )
+        selected_id = scored[0][2]
+        context_len = _context_signal_length(prefix, suffix)
+        for output_rank, (_score, _original_index, candidate_id) in enumerate(
+            scored, start=1
+        ):
+            score_details[candidate_id]["output_rank"] = output_rank
+        self.last_explanation = {
+            "context": {
+                "preceding_text": prefix,
+                "following_text": suffix,
+                "reading": reading,
+                "signal_length": context_len,
+            },
+            "formula": (
+                "evidence = model + style_bonus + context_bonus "
+                "- lexical_penalty - reading_identity_penalty; "
+                "final = evidence - rank_prior_penalty"
+            ),
+            "parameters": {
+                "rank_prior_weight": self.prior_w,
+                "arabic_numeral_style_bonus": ARABIC_NUMERAL_STYLE_BONUS,
+                "high_neural_confidence": HIGH_NEURAL_CONFIDENCE,
+                "contextual_neural_confidence": CONTEXTUAL_NEURAL_CONFIDENCE,
+                "contextual_lead_over_mozc": CONTEXTUAL_LEAD_OVER_MOZC,
+                "minimum_external_context": MIN_EXTERNAL_CONTEXT_SIGNAL,
+                "minimum_internal_context": MIN_INTERNAL_CONTEXT_SIGNAL,
+                "minimum_switch_delta": MIN_SWITCH_DELTA,
+                "minimum_switch_margin": MIN_SWITCH_MARGIN,
+                "minimum_kana_switch_delta": MIN_KANA_SWITCH_DELTA,
+                "minimum_kana_switch_margin": MIN_KANA_SWITCH_MARGIN,
+                "high_confidence_margin": HIGH_CONFIDENCE_MARGIN,
+                "reading_identity_penalty": 1.25,
+            },
+            "decision": {
+                "neural_top_id": neural_top_id,
+                "selected_id": selected_id,
+                "preserved_mozc_top": neural_top_id != selected_id,
+                "lead_over_mozc": lead_over_mozc,
+                "lead_over_runner": lead_over_runner,
+                "neural_top_probability": neural_confidence,
+                "internal_context_length": internal_context_len,
+                "ai1_evidence_score": float(evidence_scores[neural_top_id]),
+                "mozc1_evidence_score": float(evidence_scores[mozc_top_id]),
+                "ai_margin": float(
+                    evidence_scores[neural_top_id]
+                    - max(
+                        evidence_scores[item[2]]
+                        for item in pre_gate_scored[1:]
+                    )
+                ) if len(pre_gate_scored) > 1 else 0.0,
+            },
+            "candidates": sorted(
+                score_details.values(), key=lambda item: int(item["output_rank"])
+            ),
+        }
         self.last_latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
         return {
             "request_id": request_id,

@@ -219,6 +219,14 @@ class RankerTests(unittest.TestCase):
             [f"この語は{item['text']}です" for item in req["candidates"]],
         )
         self.assertEqual(response["candidates"][0]["id"], "c4")
+        explanation = ranker.last_explanation
+        self.assertEqual(
+            explanation["formula"],
+            "evidence = model + style_bonus + context_bonus - lexical_penalty - reading_identity_penalty; final = evidence - rank_prior_penalty",
+        )
+        self.assertEqual(explanation["decision"]["selected_id"], "c4")
+        self.assertEqual(explanation["candidates"][0]["text"], "甲保")
+        self.assertEqual(explanation["candidates"][0]["style_bonus"], 0.0)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows security descriptor")
     def test_pipe_security_descriptor_allows_low_integrity_owner(self):

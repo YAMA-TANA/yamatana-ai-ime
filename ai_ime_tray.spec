@@ -66,6 +66,7 @@ all_hidden = [
     'ranker.ranker',
     'ranker.onnx_ranker',
     'ranker.lexicon',
+    'ranker.scoring',
     'ranker.protocol',
     'ranker.loading_ui',
     'client.windows_pipe',

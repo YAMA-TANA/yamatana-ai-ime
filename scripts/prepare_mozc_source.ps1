@@ -28,6 +28,9 @@ Get-ChildItem -LiteralPath $Overlay -File -Recurse | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
 }
 
+python (Join-Path $RepoRoot 'scripts\patch_mozc_surrounding_context.py') --checkout $Checkout
+if ($LASTEXITCODE -ne 0) { throw 'Mozc surrounding context patch failed' }
+
 python (Join-Path $RepoRoot 'scripts\modernize_mozc_ui.py') --checkout $Checkout
 if ($LASTEXITCODE -ne 0) { throw 'Mozc modern UI patch failed' }
 

@@ -1,6 +1,7 @@
 #include "rewriter/ai_rewriter.h"
 
 #include <algorithm>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -56,8 +57,13 @@ class CompoundDictionary final : public dictionary::DictionaryInterface {
 #ifdef _WIN32
 class FakeRankerServer {
  public:
-  FakeRankerServer(std::wstring pipe_name, std::string winner)
-      : pipe_name_(std::move(pipe_name)), winner_(std::move(winner)) {
+  FakeRankerServer(std::wstring pipe_name, std::string winner,
+                   std::string required_fragment = std::string(),
+                   size_t expected_requests = 1)
+      : pipe_name_(std::move(pipe_name)),
+        winner_(std::move(winner)),
+        required_fragment_(std::move(required_fragment)),
+        expected_requests_(expected_requests) {
     pipe_ = CreateNamedPipeW(pipe_name_.c_str(), PIPE_ACCESS_DUPLEX,
                              PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
                              1, 65536, 65536, 0, nullptr);
@@ -73,29 +79,57 @@ class FakeRankerServer {
 
   bool valid() const { return pipe_ != INVALID_HANDLE_VALUE; }
 
+  std::vector<std::string> readings() const {
+    std::lock_guard<std::mutex> lock(readings_mutex_);
+    return readings_;
+  }
+
+  std::vector<size_t> candidate_counts() const {
+    std::lock_guard<std::mutex> lock(readings_mutex_);
+    return candidate_counts_;
+  }
+
  private:
   void Serve() {
+    for (size_t request_index = 0; request_index < expected_requests_;
+         ++request_index) {
+      if (!ServeOne()) return;
+    }
+  }
+
+  bool ServeOne() {
     const BOOL connected = ConnectNamedPipe(pipe_, nullptr);
-    if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) return;
+    if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) return false;
 
     std::string request;
     char buffer[65536];
     while (true) {
       DWORD read = 0;
       if (!ReadFile(pipe_, buffer, sizeof(buffer), &read, nullptr) || read == 0) {
-        return;
+        return false;
       }
       request.append(buffer, buffer + read);
       if (!request.empty() && request.back() == '\n') break;
-      if (request.size() > 262144) return;
+      if (request.size() > 262144) return false;
+    }
+
+    const std::string reading_marker = "\"read\":\"";
+    const size_t reading_start = request.find(reading_marker);
+    if (reading_start != std::string::npos) {
+      const size_t value_start = reading_start + reading_marker.size();
+      const size_t value_end = request.find('"', value_start);
+      if (value_end != std::string::npos) {
+        std::lock_guard<std::mutex> lock(readings_mutex_);
+        readings_.push_back(request.substr(value_start, value_end - value_start));
+      }
     }
 
     const std::string request_marker = "\"request_id\":\"";
     const size_t id_start = request.find(request_marker);
-    if (id_start == std::string::npos) return;
+    if (id_start == std::string::npos) return false;
     const size_t id_value_start = id_start + request_marker.size();
     const size_t id_end = request.find('"', id_value_start);
-    if (id_end == std::string::npos) return;
+    if (id_end == std::string::npos) return false;
     const std::string request_id =
         request.substr(id_value_start, id_end - id_value_start);
 
@@ -108,10 +142,17 @@ class FakeRankerServer {
          it != end; ++it) {
       ids.push_back((*it)[1].str());
     }
-    if (ids.empty()) return;
+    if (ids.empty()) return false;
+    {
+      std::lock_guard<std::mutex> lock(readings_mutex_);
+      candidate_counts_.push_back(ids.size());
+    }
 
     auto winner_it = std::find(ids.begin(), ids.end(), winner_);
-    if (winner_it != ids.end()) {
+    const bool winner_enabled =
+        required_fragment_.empty() ||
+        request.find(required_fragment_) != std::string::npos;
+    if (winner_enabled && winner_it != ids.end()) {
       const std::string winner = *winner_it;
       ids.erase(winner_it);
       ids.insert(ids.begin(), winner);
@@ -122,8 +163,10 @@ class FakeRankerServer {
     for (size_t i = 0; i < ids.size(); ++i) {
       if (i) response << ',';
       double score = -static_cast<double>(i + 1);
-      if (ids[i] == winner_) score = 10.0;
-      if (ids[i] == "baseline" && winner_ != "baseline") score = 0.0;
+      if (winner_enabled && ids[i] == winner_) score = 10.0;
+      if (ids[i] == "baseline" && winner_enabled && winner_ != "baseline") {
+        score = 0.0;
+      }
       response << "{\"id\":\"" << ids[i] << "\",\"score\":" << score
                << ",\"rank\":" << (i + 1) << '}';
     }
@@ -134,10 +177,16 @@ class FakeRankerServer {
               &written, nullptr);
     FlushFileBuffers(pipe_);
     DisconnectNamedPipe(pipe_);
+    return true;
   }
 
   std::wstring pipe_name_;
   std::string winner_;
+  std::string required_fragment_;
+  size_t expected_requests_;
+  mutable std::mutex readings_mutex_;
+  std::vector<std::string> readings_;
+  std::vector<size_t> candidate_counts_;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;
   std::thread thread_;
 };
@@ -358,6 +407,59 @@ TEST(AiRewriterTest, RankerWinnerMovesToCandidateZero) {
             0);
 }
 
+TEST(AiRewriterTest, SendsAtMostEightDistinctSurfacesToRanker) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_candidate_limit_test";
+  FakeRankerServer server(pipe_name, "c8");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("こうほ");
+  for (size_t i = 0; i < 10; ++i) {
+    segment->add_candidate()->value = "候補" + std::to_string(i);
+  }
+
+  commands::Context context;
+  context.set_preceding_text("この文の");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "候補0");
+  const std::vector<size_t> counts = server.candidate_counts();
+  ASSERT_EQ(counts.size(), 1);
+  EXPECT_EQ(counts[0], 8);
+}
+
+TEST(AiRewriterTest, DuplicateSurfacesAreNotSentAsSeparateChoices) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_candidate_dedupe_test";
+  FakeRankerServer server(pipe_name, "c2");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  segment->set_key("はな");
+  segment->add_candidate()->value = "花";
+  segment->add_candidate()->value = "花";
+  segment->add_candidate()->value = "鼻";
+  segment->add_candidate()->value = "華";
+
+  commands::Context context;
+  context.set_preceding_text("彼の顔の");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_TRUE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "鼻");
+  const std::vector<size_t> counts = server.candidate_counts();
+  ASSERT_EQ(counts.size(), 1);
+  EXPECT_EQ(counts[0], 3);
+}
+
 TEST(AiRewriterTest, SentenceStartUsesFollowingSegmentAsContext) {
   const std::wstring pipe_name =
       L"\\\\.\\pipe\\yamatana_ai_rewriter_sentence_start_test";
@@ -379,6 +481,77 @@ TEST(AiRewriterTest, SentenceStartUsesFollowingSegmentAsContext) {
   EXPECT_TRUE(rewriter.Rewrite(request, &segments));
   EXPECT_EQ(segments.segment(0).candidate(0).value, "鼻");
   EXPECT_EQ(segments.segment(0).candidate(1).value, "花");
+}
+
+TEST(AiRewriterTest, FollowingSegmentsComeBeforeDocumentSuffix) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_suffix_order_test";
+  FakeRankerServer server(
+      pipe_name, "c1", "\"following_text\":\"後続文末\"");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* target = segments.add_segment();
+  target->set_key("はな");
+  target->add_candidate()->value = "鼻";
+  target->add_candidate()->value = "花";
+  Segment* later = segments.add_segment();
+  later->set_key("こうぞく");
+  later->add_candidate()->value = "後続";
+
+  commands::Context context;
+  context.set_following_text("文末");
+  const ConversionRequest request =
+      ConversionRequestBuilder().SetContext(context).Build();
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_TRUE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
+}
+
+TEST(AiRewriterTest, MultipleSegmentsAreRankedFromRightToLeft) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_right_to_left_test";
+  FakeRankerServer server(pipe_name, "c0", std::string(), 2);
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* left = segments.add_segment();
+  left->set_key("ひだり");
+  left->add_candidate()->value = "左";
+  left->add_candidate()->value = "ヒダリ";
+  Segment* right = segments.add_segment();
+  right->set_key("みぎ");
+  right->add_candidate()->value = "右";
+  right->add_candidate()->value = "ミギ";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_FALSE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(server.readings(),
+            (std::vector<std::string>{"みぎ", "ひだり"}));
+}
+
+TEST(AiRewriterTest, LongCollapsedPhraseAtSentenceStartUsesAi) {
+  const std::wstring pipe_name =
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_collapsed_phrase_test";
+  FakeRankerServer server(pipe_name, "c1");
+  ASSERT_TRUE(server.valid());
+
+  Segments segments;
+  Segment* segment = segments.add_segment();
+  // The decision is based on shared phrase surfaces, not reading length.
+  segment->set_key("はな");
+  segment->add_candidate()->value = "庭には美しい鼻";
+  segment->add_candidate()->value = "庭には美しい花";
+
+  const ConversionRequest request;
+  AiRewriter rewriter(pipe_name);
+
+  EXPECT_TRUE(rewriter.Rewrite(request, &segments));
+  EXPECT_EQ(segments.segment(0).candidate(0).value, "庭には美しい花");
+  EXPECT_EQ(segments.segment(0).candidate(1).value, "庭には美しい鼻");
 }
 
 TEST(AiRewriterTest, UnchangedAiOrderDoesNotMarkReranked) {

@@ -1,7 +1,6 @@
 from ranker.onnx_ranker import (
     _preserve_mozc_top_if_uncertain,
     _rank_prior_penalty,
-    _required_override_margin,
 )
 
 
@@ -26,18 +25,76 @@ def test_strong_context_allows_clear_ai_override():
         (0.00, 0, "c0"),
         (-0.2, 1, "c1"),
     ]
-    evidence = {"c6": 1.00, "c0": 0.00, "c1": -0.2}
+    evidence = {"c6": 2.00, "c0": 0.00, "c1": -0.2}
     protected = _preserve_mozc_top_if_uncertain(
         scored, "レーザーで壁までの距離を", "", evidence
     )
     assert [item[2] for item in protected] == ["c6", "c0", "c1"]
 
 
-def test_context_free_compound_repair_keeps_free_reranking():
-    # Context-free model calls are used by explicit compound-boundary repair
-    # (e.g. 主戦 + 率 -> 主旋律), so the preservation gate must not block them.
-    scored = [(2.0, 2, "c2"), (0.0, 0, "c0"), (-1.0, 1, "c1")]
-    protected = _preserve_mozc_top_if_uncertain(scored, "", "")
+def test_context_free_long_phrase_uses_shared_candidate_context():
+    # A collapsed segment contains its own evidence around the single differing
+    # span. It must not be mistaken for an isolated context-free word.
+    scored = [(1.58, 1, "c1"), (0.0, 0, "c0")]
+    evidence = {"c1": 1.58, "c0": 0.0}
+    texts = {"c1": "彼の顔の鼻は大きい", "c0": "彼の顔の花は大きい"}
+    protected = _preserve_mozc_top_if_uncertain(
+        scored, "", "", evidence, texts
+    )
+    assert protected == scored
+
+
+def test_short_shared_suffix_does_not_make_sparse_context_safe():
+    # 「貨物を」 may be truncated to a two-character signal. A confident but
+    # implausible 輸送して -> 油送して change has only three shared characters.
+    scored = [(2.33, 1, "c1"), (0.0, 0, "c0")]
+    evidence = {"c1": 2.33, "c0": 0.0}
+    texts = {"c1": "油送して", "c0": "輸送して"}
+    protected = _preserve_mozc_top_if_uncertain(
+        scored, "物を", "", evidence, texts
+    )
+    assert [item[2] for item in protected] == ["c0", "c1"]
+
+
+def test_both_sides_allow_mid_confidence_clear_lead():
+    # Eight choices dilute softmax confidence for はな, but strong context on
+    # both sides plus a clear Mozc lead should still allow 花 -> 鼻.
+    scored = [
+        (2.83, 1, "c1"),
+        (1.47, 2, "c2"),
+        (1.20, 3, "c3"),
+        (0.80, 4, "c4"),
+        (0.30, 5, "c5"),
+        (0.00, 0, "c0"),
+        (-0.50, 6, "c6"),
+        (-1.00, 7, "c7"),
+    ]
+    evidence = {item[2]: item[0] for item in scored}
+    protected = _preserve_mozc_top_if_uncertain(
+        scored, "彼の顔の", "は大きい", evidence
+    )
+    assert protected == scored
+
+
+def test_one_sided_mid_confidence_preserves_when_ai_margin_is_small():
+    scored = [(2.0, 1, "c1"), (0.0, 0, "c0"), (1.9, 2, "c2")]
+    evidence = {item[2]: item[0] for item in scored}
+    protected = _preserve_mozc_top_if_uncertain(
+        scored, "神社の", "", evidence
+    )
+    assert [item[2] for item in protected] == ["c0", "c1", "c2"]
+
+
+def test_numeric_surface_tie_allows_normalized_ai_candidate():
+    # 15日 and 十五日 express the same numeric family.  A near tie between
+    # those spellings should not send a strong normalized candidate back to
+    # an unrelated Mozc top result.
+    scored = [(1.0, 2, "c1"), (0.0, 0, "c0"), (0.98, 1, "c2")]
+    evidence = {"c1": 1.0, "c0": 0.55, "c2": 0.98}
+    texts = {"c1": "15日", "c0": "中五日", "c2": "十五日"}
+    protected = _preserve_mozc_top_if_uncertain(
+        scored, "提出", "までに出す", evidence, texts, "じゅうごにち"
+    )
     assert protected == scored
 
 
@@ -48,8 +105,3 @@ def test_rank_prior_is_real_but_sublinear():
     rank10 = _rank_prior_penalty(9, 0.1)
     rank20 = _rank_prior_penalty(19, 0.1)
     assert 0.0 < rank2 < rank10 < rank20 < 0.35
-
-
-def test_override_threshold_depends_on_context_not_candidate_rank():
-    assert _required_override_margin(2) > _required_override_margin(8)
-    assert _required_override_margin(8) > _required_override_margin(20)
