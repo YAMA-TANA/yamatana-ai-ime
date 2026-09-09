@@ -43,6 +43,38 @@ LOG_DIR = PRODUCT_DATA_DIR / "logs"
 MODEL_LABEL = "Ruri-v3-70M (IME distilled)"
 
 
+def _packaged_ensemble_arguments(settings: dict[str, Any]) -> list[str]:
+    """Return the packaged LoRA3/LoRA6 model arguments when available.
+
+    The development tree still falls back to the normal single-model
+    autodetection.  Frozen installations contain both precision variants
+    under ``models/onnx``; selecting the pair here keeps the ONNX backend's
+    calibrated ensemble active without requiring a user-editable setting.
+    """
+    roots: list[Path] = []
+    if getattr(sys, "_MEIPASS", None):
+        roots.append(Path(getattr(sys, "_MEIPASS")))
+    roots.extend((ROOT, ROOT / "_internal"))
+    compute_mode = str(settings.get("compute_mode", "auto"))
+    use_gpu = compute_mode in {"auto", "gpu"}
+    if use_gpu:
+        try:
+            import onnxruntime as ort
+            use_gpu = "DmlExecutionProvider" in ort.get_available_providers()
+        except Exception:
+            use_gpu = False
+    precision = "fp16" if use_gpu else "int8"
+    relative = (
+        Path("models") / "onnx" / f"ruri-ime-lora3-{precision}.onnx",
+        Path("models") / "onnx" / f"ruri-ime-lora6-{precision}.onnx",
+    )
+    for root in roots:
+        paths = [root / item for item in relative]
+        if all(path.exists() for path in paths):
+            return [argument for path in paths for argument in ("--ensemble-model", str(path))]
+    return []
+
+
 def make_icon(state: str) -> Image.Image:
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -420,12 +452,15 @@ def run_server_mode(pipe_name: str, settings_file: str | Path = SETTINGS_FILE) -
     )
     try:
         from ranker.ranker import main as ranker_main
+        product_settings = load_settings(settings_file)
+        ensemble_arguments = _packaged_ensemble_arguments(product_settings)
         return ranker_main([
             "--pipe", pipe_name,
             "--backend", "onnx",
             "--no-ui",
             "--status-file", str(STATUS_FILE),
             "--settings-file", str(settings_file),
+            *ensemble_arguments,
         ])
     except Exception as exc:
         logging.exception("Ruri server fatal error: %s", exc)
