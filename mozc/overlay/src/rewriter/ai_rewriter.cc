@@ -672,14 +672,11 @@ bool AiRewriter::Rewrite(const ConversionRequest& request,
   ai_ranker::Client client(pipe_name_);
   bool any_reordered = false;
 
-  // Work from the caret/back of the composition.  A single slow segment must
-  // not consume the shared conversion deadline before the user's most recent
-  // text gets considered.  Context is rebuilt from the current candidate-zero
-  // surfaces on every iteration, so earlier segments also see any successful
-  // promotion already made to their right.
-  for (size_t reverse = segments->conversion_segments_size(); reverse > 0;
-       --reverse) {
-    const size_t index = reverse - 1;
+  // Work from the beginning of the composition.  Context is rebuilt from the
+  // current candidate-zero surfaces on every iteration, so later segments see
+  // any successful promotion already made to their left.
+  for (size_t index = 0; index < segments->conversion_segments_size();
+       ++index) {
     converter::Segment* segment = segments->mutable_conversion_segment(index);
     if (segment == nullptr || !IsRerankableSegment(*segment)) {
       continue;

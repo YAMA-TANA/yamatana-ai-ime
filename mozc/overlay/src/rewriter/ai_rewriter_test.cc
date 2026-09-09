@@ -509,9 +509,9 @@ TEST(AiRewriterTest, FollowingSegmentsComeBeforeDocumentSuffix) {
   EXPECT_EQ(segments.segment(0).candidate(0).value, "花");
 }
 
-TEST(AiRewriterTest, MultipleSegmentsAreRankedFromRightToLeft) {
+TEST(AiRewriterTest, MultipleSegmentsAreRankedFromLeftToRight) {
   const std::wstring pipe_name =
-      L"\\\\.\\pipe\\yamatana_ai_rewriter_right_to_left_test";
+      L"\\\\.\\pipe\\yamatana_ai_rewriter_left_to_right_test";
   FakeRankerServer server(pipe_name, "c0", std::string(), 2);
   ASSERT_TRUE(server.valid());
 
@@ -530,7 +530,7 @@ TEST(AiRewriterTest, MultipleSegmentsAreRankedFromRightToLeft) {
 
   EXPECT_FALSE(rewriter.Rewrite(request, &segments));
   EXPECT_EQ(server.readings(),
-            (std::vector<std::string>{"みぎ", "ひだり"}));
+            (std::vector<std::string>{"ひだり", "みぎ"}));
 }
 
 TEST(AiRewriterTest, LongCollapsedPhraseAtSentenceStartUsesAi) {
