@@ -12,9 +12,17 @@ import time
 import unittest
 
 from client.fallback import original_order, safe_rank
-from ranker.protocol import ProtocolError, loads_strict, validate_request, validate_response
+from ranker.protocol import (
+    ProtocolError,
+    loads_strict,
+    validate_batch_request,
+    validate_batch_response,
+    validate_request,
+    validate_response,
+)
 from ranker.lexicon import contextual_candidate_bonus
 from ranker.ranker import (InteractiveBurstGuard, RuleBasedRanker,
+                           ResponseCache,
                            _low_integrity_pipe_security,
                            normalize_windows_pipe_name, process_line,
                            summarize_reorder)
@@ -159,6 +167,141 @@ class RankerTests(unittest.TestCase):
             [candidate["id"] for candidate in response["candidates"]],
             ["c3", "c2", "c1"],
         )
+
+    def test_batch_protocol_returns_only_winner_and_confidence(self):
+        req = {
+            "request_id": "batch-protocol",
+            "inference_trigger": "explicit",
+            "segments": [{
+                "id": "s0",
+                "preceding_text": "庭には美しい",
+                "following_text": "が咲く",
+                "read": "はな",
+                "candidates": [
+                    {"id": "c0", "text": "花", "rank": 1},
+                    {"id": "c1", "text": "鼻", "rank": 2},
+                ],
+            }],
+        }
+        normalized = validate_batch_request(req)
+        response = {
+            "request_id": "batch-protocol",
+            "segments": [{"id": "s0", "winner_id": "c1", "confidence": 0.81}],
+        }
+        self.assertEqual(validate_batch_response(response, normalized), response)
+        with self.assertRaises(ProtocolError):
+            validate_batch_response({
+                "request_id": "batch-protocol",
+                "segments": [{
+                    "id": "s0", "winner_id": "c1", "confidence": 0.81,
+                    "score": 1.0,
+                }],
+            }, normalized)
+
+    def test_response_cache_ignores_request_id_and_expires(self):
+        class CountingRanker:
+            def __init__(self):
+                self.calls = 0
+
+            def rank(self, req):
+                self.calls += 1
+                return {
+                    "request_id": req["request_id"],
+                    "candidates": [
+                        {"id": item["id"], "score": float(-item["rank"]),
+                         "rank": item["rank"]}
+                        for item in req["candidates"]
+                    ],
+                }
+
+        delegate = CountingRanker()
+        cache = ResponseCache(delegate, ttl_seconds=0.02)
+        first = request("庭には美しい")
+        first["inference_trigger"] = "explicit"
+        cached = dict(first)
+        cached["request_id"] = "cache-2"
+        cache.rank(first)
+        result = cache.rank(cached)
+        self.assertEqual(delegate.calls, 1)
+        self.assertEqual(result["request_id"], "cache-2")
+        time.sleep(0.03)
+        cache.rank({**cached, "request_id": "cache-3"})
+        self.assertEqual(delegate.calls, 2)
+
+    def test_onnx_batch_flattens_all_segment_candidates_into_one_forward(self):
+        import numpy as np
+        from ranker.onnx_ranker import OnnxRuriReranker
+
+        class Encoding:
+            def __init__(self, index):
+                self.ids = [index + 1]
+                self.attention_mask = [1]
+
+        class CapturingTokenizer:
+            def __init__(self):
+                self.pairs = []
+
+            def encode_batch(self, pairs):
+                self.pairs = list(pairs)
+                return [Encoding(index) for index in range(len(self.pairs))]
+
+        class CountingSession:
+            def __init__(self):
+                self.calls = 0
+                self.batch_sizes = []
+
+            def run(self, _outputs, inputs):
+                self.calls += 1
+                size = int(inputs["input_ids"].shape[0])
+                self.batch_sizes.append(size)
+                return [np.arange(size, dtype=np.float32).reshape(-1, 1)]
+
+        tokenizer = CapturingTokenizer()
+        session = CountingSession()
+        ranker = object.__new__(OnnxRuriReranker)
+        ranker.tokenizer = tokenizer
+        ranker.session = session
+        ranker.context_enabled = True
+        ranker.context_chars = 128
+        ranker.query_variant = "current"
+        ranker.document_instruction = "一般的な日本語文書。"
+        ranker.lexicon = None
+        ranker.prior_w = 0.0
+        ranker.safety_gate = False
+
+        req = {
+            "request_id": "two-segment-one-batch",
+            "inference_trigger": "explicit",
+            "segments": [
+                {
+                    "id": "s0", "preceding_text": "前", "following_text": "後",
+                    "read": "はな",
+                    "candidates": [
+                        {"id": "c0", "text": "花", "rank": 1},
+                        {"id": "c1", "text": "鼻", "rank": 2},
+                        {"id": "c2", "text": "花", "rank": 3},
+                    ],
+                },
+                {
+                    "id": "s1", "preceding_text": "前花", "following_text": "終",
+                    "read": "はし",
+                    "candidates": [
+                        {"id": "c0", "text": "橋", "rank": 1},
+                        {"id": "c1", "text": "箸", "rank": 2},
+                    ],
+                },
+            ],
+        }
+        response = ranker.rank_batch(req)
+
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(session.batch_sizes, [4])
+        self.assertEqual(len(tokenizer.pairs), 4)
+        self.assertEqual(
+            set(item["id"] for item in response["segments"]), {"s0", "s1"}
+        )
+        self.assertTrue(all(set(item) == {"id", "winner_id", "confidence"}
+                            for item in response["segments"]))
 
     def test_onnx_scores_every_candidate_in_one_forward_batch(self):
         import numpy as np

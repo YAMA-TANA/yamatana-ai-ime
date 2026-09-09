@@ -11,10 +11,62 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
+
+
+_CUDA_DLL_HANDLES: list[Any] = []
+
+
+def _configure_cuda_dll_search_path() -> None:
+    """Make pip-installed CUDA/cuDNN DLLs visible before ORT loads providers."""
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return
+
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        bundle_root = Path(getattr(sys, "_MEIPASS"))
+        candidates.extend(
+            bundle_root / relative
+            for relative in (
+                "nvidia/cuda_runtime/bin",
+                "nvidia/cuda_nvrtc/bin",
+                "nvidia/cublas/bin",
+                "nvidia/cudnn/bin",
+            )
+        )
+    try:
+        import importlib.util
+
+        for package in ("nvidia.cuda_runtime", "nvidia.cuda_nvrtc", "nvidia.cublas", "nvidia.cudnn"):
+            spec = importlib.util.find_spec(package)
+            if spec and spec.submodule_search_locations:
+                candidates.append(Path(next(iter(spec.submodule_search_locations))) / "bin")
+    except (ImportError, ModuleNotFoundError, ValueError):
+        pass
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        normalized = str(candidate.resolve()).casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            _CUDA_DLL_HANDLES.append(os.add_dll_directory(str(candidate)))
+        except OSError:
+            logging.getLogger("yamatana_ai_ime.onnx_ranker").debug(
+                "could not add CUDA DLL directory %s", candidate, exc_info=True
+            )
+
+
 import onnxruntime as ort
 from tokenizers import Tokenizer
 
 from product_settings import domain_instruction, load_settings, normalize_settings
+try:
+    from .protocol import validate_batch_request
+except ImportError:
+    from protocol import validate_batch_request
 from ranker.lexicon import LexicalKnowledge
 from ranker.scoring import (
     ARABIC_NUMERAL_STYLE_BONUS,
@@ -42,6 +94,7 @@ from ranker.scoring import (
 
 
 LOG = logging.getLogger("yamatana_ai_ime.onnx_ranker")
+QUERY_VARIANTS = ("current", "short", "none")
 
 
 def _runtime_roots() -> list[Path]:
@@ -62,7 +115,7 @@ def _resolve_first(relative_paths: tuple[str, ...]) -> Optional[Path]:
 
 
 class OnnxRuriReranker:
-    """Ruri IME reranker without a Python, PyTorch, or CUDA prerequisite."""
+    """Ruri IME reranker with CUDA, DirectML, and CPU fallback support."""
 
     def __init__(
         self,
@@ -73,21 +126,37 @@ class OnnxRuriReranker:
         model_paths: Optional[Sequence[str | Path]] = None,
         ensemble_weights: Optional[Sequence[float]] = None,
         safety_gate: Optional[bool] = None,
+        query_variant: str = "current",
+        execution_providers: Optional[Sequence[str]] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
         self.context_enabled = bool(self.settings["context_enabled"])
         self.context_chars = int(self.settings["context_chars"])
         self.document_domain = str(self.settings["document_domain"])
         self.document_instruction = domain_instruction(self.settings)
+        if query_variant not in QUERY_VARIANTS:
+            raise ValueError(f"unknown query variant: {query_variant}")
+        self.query_variant = query_variant
         self.enable_lexical_grounding = bool(self.settings["lexical_grounding"])
         self.lexicon = LexicalKnowledge() if self.enable_lexical_grounding else None
 
         available = set(ort.get_available_providers())
         requested = str(self.settings["compute_mode"])
-        use_gpu = requested in {"auto", "gpu"} and "DmlExecutionProvider" in available
+        provider_override = list(execution_providers or [])
+        gpu_provider = next(
+            (provider for provider in ("CUDAExecutionProvider", "DmlExecutionProvider")
+             if provider in available),
+            None,
+        )
+        use_gpu = (
+            any(provider in {"DmlExecutionProvider", "CUDAExecutionProvider"}
+                for provider in provider_override)
+            if provider_override
+            else requested in {"auto", "gpu"} and gpu_provider is not None
+        )
         if requested == "gpu" and not use_gpu:
             raise RuntimeError(
-                "GPU演算が選択されていますがDirectML対応GPUを利用できません。"
+                "GPU演算が選択されていますがCUDA/DirectML対応GPUを利用できません。"
                 "設定で「自動選択」または「CPU」を選んでください。"
             )
 
@@ -178,12 +247,30 @@ class OnnxRuriReranker:
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         options.intra_op_num_threads = min(8, max(2, os.cpu_count() or 2))
         options.inter_op_num_threads = 1
-        if use_gpu:
+        if provider_override:
+            options.enable_mem_pattern = False if use_gpu else options.enable_mem_pattern
+            options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL if use_gpu else options.execution_mode
+            providers = provider_override
+            if "CPUExecutionProvider" not in providers:
+                providers.append("CPUExecutionProvider")
+        elif use_gpu:
             options.enable_mem_pattern = False
             options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-            providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+            providers = [gpu_provider, "CPUExecutionProvider"]
         else:
             providers = ["CPUExecutionProvider"]
+        if "CUDAExecutionProvider" in providers:
+            _configure_cuda_dll_search_path()
+            try:
+                # ORT 1.21+ knows how to preload the CUDA 12/cuDNN 9 wheels on
+                # Windows. Do this only when creating a CUDA session so other
+                # backends (notably PyTorch) can load their own DLL versions.
+                ort.preload_dlls(directory="")
+            except (AttributeError, OSError):
+                LOG.warning(
+                    "CUDA DLL preload failed; CUDA session creation may fall back to CPU",
+                    exc_info=True,
+                )
         LOG.info("loading %s with requested providers=%s", self.model_paths, providers)
         self.sessions = [
             ort.InferenceSession(
@@ -196,14 +283,19 @@ class OnnxRuriReranker:
         self.session = self.sessions[0]
         active_providers = list(self.session.get_providers())
         directml_active = "DmlExecutionProvider" in active_providers
-        self.device = "gpu-directml" if directml_active else "cpu"
-        if requested == "gpu" and not directml_active:
+        cuda_active = "CUDAExecutionProvider" in active_providers
+        gpu_active = directml_active or cuda_active
+        self.device = (
+            "gpu-cuda" if cuda_active else
+            "gpu-directml" if directml_active else "cpu"
+        )
+        if requested == "gpu" and not gpu_active:
             raise RuntimeError(
-                "GPU演算を要求しましたが、ONNX RuntimeセッションでDirectMLが有効になりませんでした。"
+                "GPU演算を要求しましたが、ONNX RuntimeセッションでGPUプロバイダーが有効になりませんでした。"
             )
-        if use_gpu and not directml_active:
+        if use_gpu and not gpu_active:
             LOG.warning(
-                "DirectML was requested but the active session providers are %s; using CPU",
+                "GPU was requested but the active session providers are %s; using CPU",
                 active_providers,
             )
         else:
@@ -229,6 +321,17 @@ class OnnxRuriReranker:
         for session in self.sessions:
             session.run(["logits"], inputs)
 
+    def _build_query(self, prefix: str, suffix: str) -> str:
+        query_variant = getattr(self, "query_variant", "current")
+        if query_variant == "none":
+            return ""
+        if query_variant == "short":
+            return f"文脈「{prefix}____{suffix}」から候補を選びなさい。"
+        return (
+            f"文書方針: {self.document_instruction}\n"
+            f"文脈「{prefix}____{suffix}」に最も適切な表記を選びなさい。"
+        )
+
     def rank(self, request: Dict[str, Any]) -> Dict[str, Any]:
         started = time.perf_counter()
         request_id = request.get("request_id", 0)
@@ -253,10 +356,7 @@ class OnnxRuriReranker:
             candidate_id = str(candidate.get("id", f"c{index + 1}"))
             all_candidates.append((index, candidate_id, word))
 
-        query = (
-            f"文書方針: {self.document_instruction}\n"
-            f"文脈「{prefix}____{suffix}」に最も適切な表記を選びなさい。"
-        )
+        query = self._build_query(prefix, suffix)
         inputs = self._encode(
             [query] * len(all_candidates),
             [f"{prefix}{word}{suffix}" for _index, _candidate_id, word in all_candidates],
@@ -430,3 +530,153 @@ class OnnxRuriReranker:
                 for rank, (score, _original_index, candidate_id) in enumerate(scored, start=1)
             ],
         }
+
+    def rank_batch(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Rank every conversion segment in one flat ONNX batch.
+
+        The wire response deliberately contains only one winner and one
+        confidence value per segment.  Candidate text never leaves the IME.
+        Each loaded model session receives one flat ``session.run`` call; the
+        two-model production ensemble therefore performs one call per model,
+        rather than one call per segment.
+        """
+        request = validate_batch_request(request)
+        started = time.perf_counter()
+        context_enabled = bool(getattr(self, "context_enabled", True))
+        context_chars = int(getattr(self, "context_chars", 128))
+
+        segment_data = []
+        queries: list[str] = []
+        documents: list[str] = []
+        for segment_index, segment in enumerate(request["segments"]):
+            raw_prefix = str(segment["preceding_text"])
+            raw_suffix = str(segment["following_text"])
+            if not context_enabled or context_chars <= 0:
+                prefix = ""
+                suffix = ""
+            else:
+                prefix, suffix = select_local_context(
+                    raw_prefix, raw_suffix, context_chars
+                )
+
+            unique_words: list[str] = []
+            word_indexes: dict[str, int] = {}
+            for candidate in segment["candidates"]:
+                word = str(candidate["text"])
+                if word not in word_indexes:
+                    word_indexes[word] = len(unique_words)
+                    unique_words.append(word)
+
+            flat_indexes: dict[str, int] = {}
+            query = self._build_query(prefix, suffix)
+            for word in unique_words:
+                flat_indexes[word] = len(queries)
+                queries.append(query)
+                documents.append(f"{prefix}{word}{suffix}")
+
+            model_weights = list(getattr(self, "ensemble_weights", [1.0]))
+            sessions = getattr(self, "sessions", [self.session])
+            if len(model_weights) != len(sessions):
+                model_weights = [1.0 / len(sessions)] * len(sessions)
+            if len(sessions) == 2 and len(str(segment["read"])) <= 3:
+                model_weights = [0.50, 0.50]
+            segment_data.append({
+                "index": segment_index,
+                "id": segment["id"],
+                "prefix": prefix,
+                "suffix": suffix,
+                "reading": str(segment["read"]),
+                "candidates": segment["candidates"],
+                "word_indexes": word_indexes,
+                "flat_indexes": flat_indexes,
+                "model_weights": model_weights,
+            })
+
+        inputs = self._encode(queries, documents)
+        sessions = getattr(self, "sessions", [self.session])
+        logits_by_model = [
+            np.asarray(session.run(["logits"], inputs)[0]).reshape(-1)
+            for session in sessions
+        ]
+        if any(
+            logits.shape != logits_by_model[0].shape
+            for logits in logits_by_model[1:]
+        ) or len(logits_by_model[0]) != len(queries):
+            raise RuntimeError("batch model outputs did not match flattened candidates")
+
+        results = []
+        batch_explanations = []
+        for data in segment_data:
+            evidence_scores: dict[str, float] = {}
+            scored: list[tuple[float, int, str]] = []
+            candidate_text_by_id: dict[str, str] = {}
+            candidate_texts = [str(item["text"]) for item in data["candidates"]]
+            model_weights = np.asarray(data["model_weights"], dtype=np.float32)
+            for original_index, candidate in enumerate(data["candidates"]):
+                candidate_id = str(candidate["id"])
+                word = str(candidate["text"])
+                flat_index = data["flat_indexes"][word]
+                model_scores = np.asarray(
+                    [logits[flat_index] for logits in logits_by_model],
+                    dtype=np.float32,
+                )
+                raw_score = float(np.dot(model_scores, model_weights))
+                lexical_penalty = (
+                    self.lexicon.compute_lexical_penalty(word, data["reading"])
+                    if getattr(self, "lexicon", None) and data["reading"]
+                    else 0.0
+                )
+                style_bonus = orthographic_style_bonus(word, candidate_texts)
+                context_bonus = contextual_candidate_bonus(
+                    data["prefix"], data["suffix"], word
+                )
+                reading_penalty = reading_identity_penalty(
+                    word, data["reading"], candidate_texts
+                )
+                evidence_score = (
+                    raw_score
+                    + style_bonus
+                    + context_bonus
+                    - lexical_penalty
+                    - reading_penalty
+                )
+                evidence_scores[candidate_id] = float(evidence_score)
+                candidate_text_by_id[candidate_id] = word
+                final_score = evidence_score - _rank_prior_penalty(
+                    original_index, getattr(self, "prior_w", 0.0)
+                )
+                scored.append((float(final_score), original_index, candidate_id))
+
+            scored.sort(key=lambda item: item[0], reverse=True)
+            neural_top_id = scored[0][2]
+            neural_confidence = _neural_top_probability(
+                evidence_scores, neural_top_id
+            )
+            if getattr(self, "safety_gate", True):
+                scored = _preserve_mozc_top_if_uncertain(
+                    scored,
+                    data["prefix"],
+                    data["suffix"],
+                    evidence_scores,
+                    candidate_text_by_id,
+                    data["reading"],
+                    getattr(self, "ensemble_gate_thresholds", None),
+                )
+            winner_id = scored[0][2]
+            results.append({
+                "id": data["id"],
+                "winner_id": winner_id,
+                "confidence": float(neural_confidence),
+            })
+            batch_explanations.append({
+                "id": data["id"],
+                "winner_id": winner_id,
+                "neural_top_id": neural_top_id,
+                "confidence": float(neural_confidence),
+            })
+
+        self.last_batch_latency_ms = round(
+            (time.perf_counter() - started) * 1000.0, 2
+        )
+        self.last_batch_explanation = {"segments": batch_explanations}
+        return {"request_id": request["request_id"], "segments": results}

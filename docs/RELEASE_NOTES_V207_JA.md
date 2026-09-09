@@ -8,7 +8,7 @@
 
 ## 確認
 
-- DirectML対応GPUでは、既定の自動選択でFP16モデルと `DmlExecutionProvider` を使用。
+- CUDA対応GPUでは、既定の自動選択でFP16モデルと `CUDAExecutionProvider` を使用。CUDAが利用できない環境ではDirectML、CPUの順にフォールバック。
 - Mozc → named pipe → ONNXランナーの実変換経路で、候補の再順位付けとGPU実行を確認。
 
 MSIの内部ProductVersionは `2.0.7.0`、公開リリース名は `v2.0.7-beta` です。未署名Betaのため、配布ハッシュを照合して使用してください。

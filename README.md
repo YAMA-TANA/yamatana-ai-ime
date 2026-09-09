@@ -19,7 +19,7 @@ Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替�
 - Windows 10 22H2（build 19045）またはWindows 11、x64
 - 8GB RAM以上（16GB推奨）
 - 空き容量 約3GB
-- CPU実行対応（INT8モデル: 67.8MB、DirectML GPU対応: FP16 134MB）。対応GPUがあるPCでは自動的にDirectML GPU推論を優先
+- CPU実行対応（INT8モデル: 67.8MB、CUDA / DirectML GPU対応: FP16 134MB）。対応GPUがあるPCでは自動的にCUDA、次にDirectMLのGPU推論を優先
 - インストールには管理者権限が必要
 
 詳細は [システム要件](docs/SYSTEM_REQUIREMENTS_JA.md) および [モデル軽量化・GPU推論技術解説](docs/DISTILLATION_QUANTIZATION_AND_GPU_INFERENCE_JA.md) を参照してください。

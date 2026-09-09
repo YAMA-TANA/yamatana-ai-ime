@@ -60,7 +60,10 @@ def _packaged_ensemble_arguments(settings: dict[str, Any]) -> list[str]:
     if use_gpu:
         try:
             import onnxruntime as ort
-            use_gpu = "DmlExecutionProvider" in ort.get_available_providers()
+            available = set(ort.get_available_providers())
+            use_gpu = bool(
+                available.intersection({"CUDAExecutionProvider", "DmlExecutionProvider"})
+            )
         except Exception:
             use_gpu = False
     precision = "fp16" if use_gpu else "int8"
