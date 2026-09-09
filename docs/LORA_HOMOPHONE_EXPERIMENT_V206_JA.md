@@ -79,6 +79,32 @@ python scripts/evaluate_practical_particle_holdout.py
 python scripts/evaluate_preceding_only_range_holdout.py
 ```
 
+## 前文脈専用LoRA6（2026-09-09）
+
+前文脈のみの低下を補うため、別文脈の実務テンプレートを追加学習した。助詞別セグメント24,168ペア、単語セグメント24,024ペア、長い一セグメント950ペア、新規合計49,142ペアに、既存データのreplay約12,000件を加えた計61,142ペアである。学習はLoRA4を初期値、2 epoch、learning rate `7e-5` とし、holdout本文は完全一致除外した。
+
+| 前文脈のみ stress | LoRA4 | LoRA6単体 | LoRA3+6 ensemble |
+|---|---:|---:|---:|
+| 単語 | 42/56 (75.00%) | 47/56 (83.93%) | 51/56 (91.07%) |
+| 単語＋助詞 | 42/56 (75.00%) | 50/56 (89.29%) | 52/56 (92.86%) |
+| 長い一セグメント | 8/12 (66.67%) | 9/12 (75.00%) | 9/12 (75.00%) |
+
+旧strict 120問ではLoRA6単体114/120 (95.00%)、LoRA3+6 ensemble 120/120 (100.00%)。新規100問ではLoRA6単体92/100 (92.00%)、LoRA3+6 ensemble 97/100 (97.00%)だった。したがってLoRA6単体はround4単体を置き換えず、現時点では前文脈を重視する2モデルensemble候補として扱う。98%には新規100問であと1問届いていない。
+
+生成・学習・評価コマンド:
+
+```powershell
+python scripts/build_preceding_only_lora_round6_dataset.py
+python scripts/train_70m_residual_lora.py `
+  --base-model build/ruri-v3-70m-ime-lora4-20260909 `
+  --dataset integration/ime_residual_lora_round6_preceding_only.json `
+  --output build/ruri-v3-70m-ime-lora6-preceding-only-20260915 `
+  --epochs 2 --batch-size 32 --grad-accum 2 --lr 7e-5
+python scripts/export_distilled_onnx.py `
+  --model-dir build/ruri-v3-70m-ime-lora6-preceding-only-20260915 `
+  --output-dir build/onnx-model-70m-lora6-preceding-only-20260915
+```
+
 再現コマンド:
 
 ```powershell
