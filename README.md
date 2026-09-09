@@ -10,7 +10,7 @@ Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替�
 - 70M級Ruri v3 student rerankerをIME向けに蒸留し、全候補を1バッチでONNX Runtime実行
 - 入力、前後文脈、カスタム指示、辞書、推論をPC内だけで処理
 - タスクバートレイからAI ON/OFF、文脈保持、文書分野、カスタム指示、CPU/GPU設定を変更
-- AIは初期OFF。トレイは状態切替と設定のため起動しますが、OFF時はAIモデルをロードしません
+- AIは初期ON。トレイとAIモデルはサインイン時に起動し、不要な場合はトレイからOFFにできます
 - 医学・法律・技術などの文書分野を指定し、その指示をrerankerへ渡せる
 - AIが失敗・停止してもMozcの候補を使うフェイルセーフ設計
 
@@ -29,8 +29,8 @@ Yamatana AI IMEは、Mozcの変換候補をローカルAI rerankerで並べ替�
 1. [Releases](https://github.com/YAMA-TANA/yamatana-ai-ime/releases) から最新の `.msi` と `SHA256SUMS.txt` をダウンロードします。
 2. PowerShellで `Get-FileHash .\Yamatana-AI-IME-MOZC-Ver-<version>-x64.msi -Algorithm SHA256` を実行し、公開ハッシュと一致することを確認します。
 3. MSIをダブルクリックし、プライバシー説明を確認してインストールします。
-4. サインアウトまたは再起動後、`Win + Space` で **Yamatana AI IME (MOZC Ver)** を選択します。
-5. 通知領域のYamatanaアイコンを開き、必要なときだけ **AIをON** にします。初期状態はOFFです。アイコンが隠れている場合は、タスクバーの `^` を開いてください。
+4. サインアウトまたは再起動後、トレイとAIモデルが起動します。`Win + Space` で **Yamatana AI IME (MOZC Ver)** を選択します。
+5. 通知領域のYamatanaアイコンからAIをOFFにできます。アイコンが隠れている場合は、タスクバーの `^` を開いてください。
 
 本ソフトはMSIXではありません。既存のMozc TSF登録順序を維持したMSIで配布します。
 

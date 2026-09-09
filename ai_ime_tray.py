@@ -494,7 +494,10 @@ def main() -> int:
         globals()["_TRAY_MUTEX"] = mutex
     migrated_legacy_autostart = migrate_legacy_windows_autostart(SETTINGS_FILE)
     AIIMETray(allow_legacy_ranker=migrated_legacy_autostart).run(
-        start_on=True if args.start_on else None
+        # The installer passes this flag only on a fresh installation.  Make
+        # it explicit so a missing/old settings file cannot leave the first
+        # launch in the OFF state.
+        start_on=True if (args.start_on or args.from_installer) else None
     )
     return 0
 
