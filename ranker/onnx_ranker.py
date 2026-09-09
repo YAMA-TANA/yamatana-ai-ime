@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import numpy as np
 import onnxruntime as ort
@@ -67,11 +68,13 @@ class OnnxRuriReranker:
         self,
         settings: Optional[Mapping[str, Any]] = None,
         settings_path: Optional[str | Path] = None,
-        prior_w: float = DEFAULT_RANK_PRIOR_WEIGHT,
+        prior_w: Optional[float] = None,
         model_path: Optional[str | Path] = None,
+        model_paths: Optional[Sequence[str | Path]] = None,
+        ensemble_weights: Optional[Sequence[float]] = None,
+        safety_gate: Optional[bool] = None,
     ) -> None:
         self.settings = normalize_settings(settings) if settings is not None else load_settings(settings_path)
-        self.prior_w = float(prior_w)
         self.context_enabled = bool(self.settings["context_enabled"])
         self.context_chars = int(self.settings["context_chars"])
         self.document_domain = str(self.settings["document_domain"])
@@ -88,8 +91,12 @@ class OnnxRuriReranker:
                 "設定で「自動選択」または「CPU」を選んでください。"
             )
 
-        if model_path is not None:
-            resolved_model = Path(model_path)
+        if model_paths is not None:
+            if model_path is not None:
+                raise ValueError("pass model_path or model_paths, not both")
+            requested_models = [Path(path) for path in model_paths]
+        elif model_path is not None:
+            requested_models = [Path(model_path)]
         elif use_gpu:
             resolved_model = _resolve_first((
                 "build/onnx-model-70m/ruri-ime-fp16.onnx",
@@ -97,6 +104,7 @@ class OnnxRuriReranker:
                 "build/onnx-model/ruri-ime-fp16.onnx",
                 "models/onnx/ruri-ime-fp32.onnx",
             ))
+            requested_models = [resolved_model] if resolved_model else []
         else:
             resolved_model = _resolve_first((
                 "build/onnx-model-70m/ruri-ime-int8.onnx",
@@ -104,8 +112,55 @@ class OnnxRuriReranker:
                 "build/onnx-model/ruri-ime-int8.onnx",
                 "models/onnx/ruri-ime-fp32.onnx",
             ))
-        if not resolved_model or not resolved_model.exists():
+            requested_models = [resolved_model] if resolved_model else []
+        if not requested_models or any(
+            path is None or not path.exists() for path in requested_models
+        ):
             raise FileNotFoundError("配布用ONNXモデルが見つかりません。再インストールしてください。")
+        self.model_paths = [str(Path(path).resolve()) for path in requested_models]
+        self.model_path = self.model_paths[0]
+        # The old single-model gate is calibrated for one score distribution.
+        # A calibrated multi-model ensemble already combines complementary
+        # evidence, so it defaults to direct selection; callers can opt back
+        # into the conservative gate with safety_gate=True.
+        self.safety_gate = (
+            len(self.model_paths) == 1 if safety_gate is None else bool(safety_gate)
+        )
+        if prior_w is None:
+            self.prior_w = (
+                DEFAULT_RANK_PRIOR_WEIGHT if len(self.model_paths) == 1 else 0.0
+            )
+        else:
+            self.prior_w = float(prior_w)
+        if ensemble_weights is None:
+            if len(self.model_paths) == 2:
+                # LoRA6 handles the preceding-only distribution better, while
+                # LoRA3 supplies complementary evidence on the strict set.
+                weights = [0.25, 0.75]
+            else:
+                weights = [1.0 / len(self.model_paths)] * len(self.model_paths)
+        else:
+            weights = [float(value) for value in ensemble_weights]
+        if (
+            len(weights) != len(self.model_paths)
+            or any(not math.isfinite(value) or value < 0.0 for value in weights)
+            or sum(weights) <= 0.0
+        ):
+            raise ValueError(
+                "ensemble_weights must be finite non-negative values matching model_paths"
+            )
+        total_weight = sum(weights)
+        self.ensemble_weights = [value / total_weight for value in weights]
+        self.ensemble_gate_thresholds = (
+            {
+                "minimum_switch_delta": 0.25,
+                "minimum_switch_margin": 0.10,
+                "contextual_neural_confidence": 0.25,
+                "contextual_lead_over_mozc": 1.20,
+            }
+            if len(self.model_paths) > 1
+            else None
+        )
         tokenizer_path = _resolve_first((
             "build/onnx-model-70m/tokenizer.json",
             "models/onnx/tokenizer.json",
@@ -115,7 +170,6 @@ class OnnxRuriReranker:
         if tokenizer_path is None:
             raise FileNotFoundError("AI tokenizer.json が見つかりません。再インストールしてください。")
 
-        self.model_path = str(resolved_model.resolve())
         self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self.tokenizer.enable_truncation(max_length=256)
         self.tokenizer.enable_padding(pad_id=3, pad_token="<pad>")
@@ -130,10 +184,16 @@ class OnnxRuriReranker:
             providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
         else:
             providers = ["CPUExecutionProvider"]
-        LOG.info("loading %s with requested providers=%s", resolved_model, providers)
-        self.session = ort.InferenceSession(
-            str(resolved_model), sess_options=options, providers=providers
-        )
+        LOG.info("loading %s with requested providers=%s", self.model_paths, providers)
+        self.sessions = [
+            ort.InferenceSession(
+                path, sess_options=options, providers=providers
+            )
+            for path in self.model_paths
+        ]
+        # Keep the singular attribute for existing diagnostics and lightweight
+        # tests that inject one fake ONNX session.
+        self.session = self.sessions[0]
         active_providers = list(self.session.get_providers())
         directml_active = "DmlExecutionProvider" in active_providers
         self.device = "gpu-directml" if directml_active else "cpu"
@@ -166,7 +226,8 @@ class OnnxRuriReranker:
             [query] * warmup_count,
             [f"文章の変換候補{index}" for index in range(warmup_count)],
         )
-        self.session.run(["logits"], inputs)
+        for session in self.sessions:
+            session.run(["logits"], inputs)
 
     def rank(self, request: Dict[str, Any]) -> Dict[str, Any]:
         started = time.perf_counter()
@@ -200,7 +261,25 @@ class OnnxRuriReranker:
             [query] * len(all_candidates),
             [f"{prefix}{word}{suffix}" for _index, _candidate_id, word in all_candidates],
         )
-        logits = np.asarray(self.session.run(["logits"], inputs)[0]).reshape(-1)
+        sessions = getattr(self, "sessions", [self.session])
+        ensemble_weights = getattr(self, "ensemble_weights", [1.0])
+        request_weights = list(ensemble_weights)
+        if len(sessions) == 2 and len(reading) <= 3:
+            # Very short readings have a higher semantic collision rate.  The
+            # LoRA3 signal is more reliable on the rare cases where LoRA3 and
+            # LoRA6 disagree, while longer practical phrases favor LoRA6.
+            request_weights = [0.50, 0.50]
+        logits_by_model = [
+            np.asarray(session.run(["logits"], inputs)[0]).reshape(-1)
+            for session in sessions
+        ]
+        if any(logits.shape != logits_by_model[0].shape for logits in logits_by_model[1:]):
+            raise RuntimeError("ensemble models returned different candidate batch sizes")
+        logits = np.average(
+            np.stack(logits_by_model, axis=0),
+            axis=0,
+            weights=np.asarray(request_weights, dtype=np.float32),
+        )
 
         scored: list[tuple[float, int, str]] = []
         evidence_scores: dict[str, float] = {}
@@ -236,6 +315,10 @@ class OnnxRuriReranker:
                 "rank_prior_penalty": float(prior_penalty),
                 "evidence_score": float(evidence_score),
                 "final_score": float(final_score),
+                "model_scores": [
+                    float(model_logits[original_index])
+                    for model_logits in logits_by_model
+                ],
             }
 
         # Mozc rank is only a soft prior.  For exact score ties the stable
@@ -262,14 +345,16 @@ class OnnxRuriReranker:
         )
         neural_confidence = _neural_top_probability(evidence_scores, neural_top_id)
         pre_gate_scored = list(scored)
-        scored = _preserve_mozc_top_if_uncertain(
-            scored,
-            prefix,
-            suffix,
-            evidence_scores,
-            candidate_text_by_id,
-            reading,
-        )
+        if getattr(self, "safety_gate", True):
+            scored = _preserve_mozc_top_if_uncertain(
+                scored,
+                prefix,
+                suffix,
+                evidence_scores,
+                candidate_text_by_id,
+                reading,
+                getattr(self, "ensemble_gate_thresholds", None),
+            )
         selected_id = scored[0][2]
         context_len = _context_signal_length(prefix, suffix)
         for output_rank, (_score, _original_index, candidate_id) in enumerate(
@@ -284,6 +369,10 @@ class OnnxRuriReranker:
                 "signal_length": context_len,
             },
             "formula": (
+                "evidence = weighted_model_ensemble + style_bonus + context_bonus "
+                "- lexical_penalty - reading_identity_penalty; "
+                "final = evidence - rank_prior_penalty"
+                if len(sessions) > 1 else
                 "evidence = model + style_bonus + context_bonus "
                 "- lexical_penalty - reading_identity_penalty; "
                 "final = evidence - rank_prior_penalty"
@@ -302,6 +391,14 @@ class OnnxRuriReranker:
                 "minimum_kana_switch_margin": MIN_KANA_SWITCH_MARGIN,
                 "high_confidence_margin": HIGH_CONFIDENCE_MARGIN,
                 "reading_identity_penalty": 1.25,
+                "model_paths": list(
+                    getattr(self, "model_paths", None)
+                    or [getattr(self, "model_path", "")]
+                ),
+                "ensemble_weights": list(request_weights),
+                "ensemble_gate_thresholds": getattr(
+                    self, "ensemble_gate_thresholds", None
+                ),
             },
             "decision": {
                 "neural_top_id": neural_top_id,

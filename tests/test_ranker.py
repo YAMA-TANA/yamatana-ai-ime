@@ -228,6 +228,62 @@ class RankerTests(unittest.TestCase):
         self.assertEqual(explanation["candidates"][0]["text"], "甲保")
         self.assertEqual(explanation["candidates"][0]["style_bonus"], 0.0)
 
+    def test_onnx_two_model_ensemble_uses_short_reading_calibration(self):
+        import numpy as np
+        from ranker.onnx_ranker import OnnxRuriReranker
+
+        class Encoding:
+            def __init__(self, index):
+                self.ids = [index + 1]
+                self.attention_mask = [1]
+
+        class CapturingTokenizer:
+            def encode_batch(self, pairs):
+                return [Encoding(index) for index, _pair in enumerate(pairs)]
+
+        class FixedSession:
+            def __init__(self, values):
+                self.values = np.asarray(values, dtype=np.float32).reshape(-1, 1)
+                self.calls = 0
+
+            def run(self, _outputs, _inputs):
+                self.calls += 1
+                return [self.values]
+
+        model_a = FixedSession([0.0, 2.0])
+        model_b = FixedSession([2.0, 0.0])
+        ranker = object.__new__(OnnxRuriReranker)
+        ranker.tokenizer = CapturingTokenizer()
+        ranker.sessions = [model_a, model_b]
+        ranker.session = model_a
+        ranker.ensemble_weights = [0.25, 0.75]
+        ranker.model_paths = ["a.onnx", "b.onnx"]
+        ranker.context_enabled = True
+        ranker.context_chars = 128
+        ranker.document_instruction = "一般的な日本語文書。"
+        ranker.lexicon = None
+        ranker.prior_w = 0.0
+        ranker.safety_gate = False
+
+        ranker.rank({
+            "request_id": "ensemble-short-reading",
+            "preceding_text": "文脈",
+            "following_text": "",
+            "read": "はな",
+            "candidates": [
+                {"id": "c0", "text": "花", "rank": 1},
+                {"id": "c1", "text": "鼻", "rank": 2},
+            ],
+        })
+
+        self.assertEqual(model_a.calls, 1)
+        self.assertEqual(model_b.calls, 1)
+        self.assertEqual(ranker.last_explanation["parameters"]["ensemble_weights"], [0.5, 0.5])
+        self.assertEqual(
+            ranker.last_explanation["formula"],
+            "evidence = weighted_model_ensemble + style_bonus + context_bonus - lexical_penalty - reading_identity_penalty; final = evidence - rank_prior_penalty",
+        )
+
     @unittest.skipUnless(sys.platform == "win32", "Windows security descriptor")
     def test_pipe_security_descriptor_allows_low_integrity_owner(self):
         attributes, descriptor = _low_integrity_pipe_security()

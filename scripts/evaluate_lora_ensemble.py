@@ -54,8 +54,12 @@ def evaluate(model_a: Path, model_b: Path, output: Path) -> Dict[str, Any]:
             ranker.rank(req)
             explanations.append({item["id"]: item for item in ranker.last_explanation["candidates"]})
         candidate_ids = explanations[0].keys()
+        ensemble_weights = (0.50, 0.50) if len(q["reading"]) <= 3 else (0.25, 0.75)
         averaged = {
-            cid: sum(explanation[cid]["evidence_score"] for explanation in explanations) / len(explanations)
+            cid: sum(
+                weight * explanation[cid]["evidence_score"]
+                for weight, explanation in zip(ensemble_weights, explanations)
+            )
             for cid in candidate_ids
         }
         selected_id = max(averaged, key=averaged.get)
@@ -77,6 +81,7 @@ def evaluate(model_a: Path, model_b: Path, output: Path) -> Dict[str, Any]:
         "total": len(HOLDOUT_TEST_SET),
         "correct": correct,
         "accuracy": round(correct / len(HOLDOUT_TEST_SET) * 100.0, 2),
+        "ensemble_weights": "short readings 50/50; other readings 25/75",
         "details": details,
     }
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

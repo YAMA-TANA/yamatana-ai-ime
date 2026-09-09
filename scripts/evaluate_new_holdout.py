@@ -226,8 +226,12 @@ def evaluate(single_path: Path, ensemble_a: Path, ensemble_b: Path, output: Path
         for ranker in (ens_a, ens_b):
             ranker.rank(req)
             explanations.append({x["id"]: x for x in ranker.last_explanation["candidates"]})
+        ensemble_weights = (0.50, 0.50) if len(item["reading"]) <= 3 else (0.25, 0.75)
         scores = {
-            cid: sum(explanation[cid]["evidence_score"] for explanation in explanations) / 2.0
+            cid: sum(
+                weight * explanation[cid]["evidence_score"]
+                for weight, explanation in zip(ensemble_weights, explanations)
+            )
             for cid in explanations[0]
         }
         ensemble_id = max(scores, key=scores.get)
@@ -252,6 +256,7 @@ def evaluate(single_path: Path, ensemble_a: Path, ensemble_b: Path, output: Path
         "single_accuracy": round(single_correct / len(NEW_HOLDOUT) * 100.0, 2),
         "ensemble_correct": ensemble_correct,
         "ensemble_accuracy": round(ensemble_correct / len(NEW_HOLDOUT) * 100.0, 2),
+        "ensemble_weights": "short readings 50/50; other readings 25/75",
         "category": category,
         "details": details,
     }

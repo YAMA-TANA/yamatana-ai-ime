@@ -117,3 +117,36 @@ python scripts/evaluate_lora_ensemble.py `
 ```
 
 この実験で作ったモデルは `build/` の一時成果物であり、既存のGitHub releaseやインストール済みモデルは置換していない。
+
+## LoRA3+LoRA6 実ランナーのアンサンブル調整（2026-09-09）
+
+評価器だけでスコアを平均するのではなく、ONNXランナー自身が2本のモデルを読み、raw logitsを統合してから表記補正と候補選択を一度だけ行う経路を追加した。
+
+- 通常の読み（4文字以上）: LoRA3 25% + LoRA6 75%
+- 短い読み（3文字以下）: LoRA3 50% + LoRA6 50%（モデルの意見が割れやすいため）
+- 2モデル時は単体用のMozc順位ペナルティを0にし、単体用安全ゲートを自動適用しない。必要なら`safety_gate=True`で比較できる。
+- 各候補の`model_scores`、使用重み、モデル一覧を説明ペイロードに保存する。
+
+実ランナー経路（strict 120、新規100、前文脈のみ152）:
+
+| ベンチ | 正解 | 精度 |
+|---|---:|---:|
+| strict 120 | 120/120 | 100.00% |
+| 新規100 | 97/100 | 97.00% |
+| 前文脈のみ152 | 135/152 | 88.82% |
+
+起動例:
+
+```powershell
+python -m ranker.ranker --backend onnx --pipe ai_ime_ranker `
+  --ensemble-model build/onnx-model-70m-lora3-20260909/ruri-ime-int8.onnx `
+  --ensemble-model build/onnx-model-70m-lora6-preceding-only-20260915/ruri-ime-int8.onnx
+```
+
+再現評価:
+
+```powershell
+python scripts/evaluate_runtime_ensemble.py `
+  --model-a build/onnx-model-70m-lora3-20260909/ruri-ime-int8.onnx `
+  --model-b build/onnx-model-70m-lora6-preceding-only-20260915/ruri-ime-int8.onnx
+```

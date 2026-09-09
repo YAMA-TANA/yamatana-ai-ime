@@ -490,6 +490,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         help="Hugging Face model ID/path for --backend ruri or qwen",
     )
     parser.add_argument(
+        "--ensemble-model", action="append", default=None,
+        help=(
+            "ONNX model path; repeat for a weighted ensemble "
+            "(two paths use the calibrated LoRA3/LoRA6 25/75 default)"
+        ),
+    )
+    parser.add_argument(
         "--device", default=None,
         help="torch device (default: cuda if available, else cpu)",
     )
@@ -556,6 +563,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             product_settings = load_settings(args.settings_file)
             ranker = OnnxRuriReranker(
                 settings=product_settings,
+                model_paths=args.ensemble_model,
             )
             LOG.info(
                 "ONNX Ruri model loaded in %.1f ms (device=%s)",
@@ -596,7 +604,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             # return Mozc order immediately until the same request is stable
             # for 500 ms, so typing never starts model inference.
             ranker = InteractiveBurstGuard(ranker, settle_seconds=0.5)
-        model = getattr(ranker, "model_path", args.model_name if args.backend != "rule" else "rule")
+        model_paths = getattr(ranker, "model_paths", None)
+        model = (
+            ",".join(str(path) for path in model_paths)
+            if model_paths
+            else getattr(ranker, "model_path", args.model_name if args.backend != "rule" else "rule")
+        )
         status = RuntimeStatus(
             args.status_file, args.backend, str(model), normalize_windows_pipe_name(args.pipe)
         )

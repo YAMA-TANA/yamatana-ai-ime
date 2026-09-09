@@ -252,8 +252,14 @@ def _pick_ensemble(rankers: List[OnnxRuriReranker], request: Dict[str, Any]) -> 
     for ranker in rankers:
         ranker.rank(request)
         explanations.append({x["id"]: x for x in ranker.last_explanation["candidates"]})
+    ensemble_weights = (
+        (0.50, 0.50) if len(str(request.get("read", ""))) <= 3 else (0.25, 0.75)
+    )
     scores = {
-        cid: sum(e[cid]["evidence_score"] for e in explanations) / len(explanations)
+        cid: sum(
+            weight * explanation[cid]["evidence_score"]
+            for weight, explanation in zip(ensemble_weights, explanations)
+        )
         for cid in explanations[0]
     }
     chosen = max(scores, key=scores.get)
