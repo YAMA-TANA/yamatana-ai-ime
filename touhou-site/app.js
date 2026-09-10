@@ -1,0 +1,54 @@
+const A=window.__W, DIR={1:"compe01",2:"compe03",3:"compe04",4:"compe05",5:"compe06",6:"compe07",7:"compe08",8:"compe09",9:"compe10"};
+const THEME_OLD={1:"紅葉",2:"酒",3:"箱",4:"穴",5:"きかい",6:"水",7:"色",8:"雨",9:"かがみ"}, THEME_NEW={1:"新しい",2:"空白"};
+const F=["id","series","round","free","title","author","points","key","state","size","evals","comments","rate","submitted","updated","ts"];
+const W=A.map(a=>Object.fromEntries(F.map((k,i)=>[k,a[i]])));
+const $=(s,r=document)=>r.querySelector(s), esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const norm=s=>String(s??"").normalize("NFKC").toLowerCase().replace(/\s+/g,"");
+const seriesName=w=>w.series===0?"旧東方SSこんぺ":"新東方SSコンペ";
+const theme=w=>w.series===0?(w.free?"お題なし":THEME_OLD[w.round]):THEME_NEW[w.round];
+const rid=w=>(w.series===0?"old":"new")+"-r"+w.round;
+const whref=w=>"/works/"+encodeURIComponent(w.id), rhref=r=>"/rounds/"+r;
+const srcDir=w=>w.series===0?(w.free?"compe02":DIR[w.round]):null;
+const sourceUrl=w=>w.series===0&&w.key?`http://www10.atpages.jp/thcompe/${srcDir(w)}/?mode=read&key=${w.key}&log=0`:null;
+const archiveUrl=w=>{const s=sourceUrl(w);if(!s)return null;return w.ts?`https://web.archive.org/web/${w.ts}id_/${s}`:`https://web.archive.org/web/*/${s}`};
+const stateLabel=w=>w.state===1?"Wayback本文確認":w.state===0?"索引のみ・本文保存未確認":"公開アーカイブ未発見";
+const rankSource=r=>r<=2?"https://w.atwiki.jp/sousouwa/pages/414.html":r<=4?"https://w.atwiki.jp/sousouwa/pages/757.html":r<=6?"https://w.atwiki.jp/sousouwa/pages/1035.html":r<=8?"https://w.atwiki.jp/sousouwa/pages/1185.html":null;
+function workCard(w){return `<a class="work-card" href="${whref(w)}"><div><div class="work-title">${esc(w.title)}</div><div class="work-meta">${esc(w.author)} · ${seriesName(w)} 第${w.round}回${w.free?"・お題なし":""} · ${esc(theme(w))}<span class="status ${w.state===1?"ok":w.state===-1?"missing":""}">${stateLabel(w)}</span></div></div><div class="work-score">${w.points!=null?w.points+" pt":"詳細 →"}</div></a>`}
+const oldRounds=[1,2,3,4,5,6,7,8,9].map(n=>({id:"old-r"+n,series:0,round:n,theme:THEME_OLD[n]}));
+const newRounds=[1,2].map(n=>({id:"new-r"+n,series:1,round:n,theme:THEME_NEW[n]}));
+const R=[...oldRounds,...newRounds].map(r=>({...r,count:W.filter(w=>rid(w)===r.id).length}));
+function header(){return `<header><div class="wrap nav"><a class="brand" href="/"><span class="seal">SS</span><span>東方SSこんぺ 非公式アーカイブ</span></a><nav><a href="/">トップ</a><a href="/#works">作品検索</a></nav></div></header>`}
+function footer(){return `<footer><div class="wrap footer-row"><div>非公式資料。上海アリス幻樂団・歴代こんぺ運営・Internet Archiveとは無関係です。</div><div>作品本文は当サイトでは配信しません。</div></div></footer>`}
+function renderHome(){
+ document.title="東方SSこんぺ 非公式アーカイブ";
+ document.body.innerHTML=header()+`<main><div class="hero"><div class="wrap"><div class="eyebrow">Unofficial historical index</div><h1>作品まで、ちゃんと辿れる<br>東方SSこんぺ索引。</h1><p class="lead">旧東方SSこんぺは作品単位の投稿キーと元URLを復元し、Wayback Machine の保存先へリンクします。新東方SSコンペは別系統として扱い、本文のWaybackリンクは掲載しません。</p>
+ <div class="notice"><strong>旧こんぺの正しいURL構造に修正済み。</strong> 元サイトは <code>www10.atpages.jp/thcompe/</code>。第1回お題あり＝<code>compe01</code>、第1回お題なし＝<code>compe02</code>、第2回＝<code>compe03</code>、第3回＝<code>compe04</code> … 第9回＝<code>compe10</code> です。作品ページでは投稿キーを含む元URLを個別に生成します。</div>
+ <div class="notice wanted"><strong>新東方SSコンペ 第2回「空白」情報提供募集中</strong><br>42作品の題名・作者・得点・評価などは確認済みですが、本文の公開アーカイブは現在見つかっていません。本文ファイル、作者原稿、ブラウザ保存、旧ミラーのバックアップ、当時の配布物・URLなどの情報をお持ちの方からの情報提供を募集しています。<br><small>※ 新東方SSコンペには本文Waybackリンクを付けていません。</small></div>
+ <div class="stats"><div class="stat"><b>672</b><span>旧こんぺ収録作品</span></div><div class="stat"><b>575</b><span>Wayback本文確認作品</span></div><div class="stat"><b>59</b><span>新こんぺ書誌情報</span></div><div class="stat"><b>731</b><span>個別ページを持つ作品</span></div></div></div></div>
+ <section id="rounds"><div class="wrap"><div class="section-head"><div><div class="eyebrow">Rounds</div><h2>開催回から探す</h2></div><p>旧1〜9回／新1〜2回を分離。</p></div><div class="rounds">${R.map(r=>`<article class="round-card ${r.series?"new":""}"><div class="series">${r.series?"新東方SSコンペ":"旧東方SSこんぺ"}</div><h3>第${r.round}回 <span class="theme">「${esc(r.theme)}」</span></h3><div class="meta">収録 ${r.count}件${r.id==="old-r1"?"（お題なし7件を含む）":""}${r.id==="new-r2"?"・情報提供募集中":""}</div><div class="links"><a class="text-link" href="${rhref(r.id)}">作品一覧を見る →</a>${!r.series?`<a class="text-link" href="https://web.archive.org/web/*/http://www10.atpages.jp/thcompe/${DIR[r.round]}/" target="_blank" rel="noopener noreferrer">開催回のWayback ↗</a>`:""}</div></article>`).join("")}</div></div></section>
+ <section class="finder" id="works"><div class="wrap"><div class="section-head"><div><div class="eyebrow">Works</div><h2>作品検索</h2></div><p>題名・作者・お題で731作品を検索。</p></div><div class="controls"><input id="q" placeholder="作品名・作者名で検索"><select id="series"><option value="all">全シリーズ</option><option value="0">旧東方SSこんぺ</option><option value="1">新東方SSコンペ</option></select><select id="round"><option value="all">すべての開催回</option></select></div><div class="result-meta" id="meta"></div><div class="works" id="list"></div></div></section>
+ <section><div class="wrap detail-grid"><div><div class="eyebrow">Archive policy</div><h2>作品本文は置かない</h2><p>このサイトは再転載サイトではなく、書誌情報と所在情報の索引です。旧こんぺは作品ごとの元URLを復元してInternet Archiveへリンクし、新こんぺは本文保存が確認できるまでメタ情報のみ掲載します。</p></div><aside class="panel side"><h2>保存状態の意味</h2><p class="meta"><b>Wayback本文確認</b>：復元作業で本文ページを実際に取得できた作品。<br><b>索引のみ</b>：題名・作者・投稿キーは確認できるが本文保存は未確認。<br><b>公開アーカイブ未発見</b>：新こんぺ。本文リンクは掲載しません。</p></aside></div></section></main>`+footer();
+ const s=$("#series"),rr=$("#round"),q=$("#q"),list=$("#list"),meta=$("#meta");
+ function fill(){rr.innerHTML='<option value="all">すべての開催回</option>'+R.filter(r=>s.value==="all"||String(r.series)===s.value).map(r=>`<option value="${r.id}">${r.series?"新":"旧"} 第${r.round}回「${esc(r.theme)}」</option>`).join("")}
+ function go(){const n=norm(q.value);let a=W.filter(w=>(s.value==="all"||String(w.series)===s.value)&&(rr.value==="all"||rid(w)===rr.value)&&(!n||norm(w.title+" "+w.author+" "+theme(w)).includes(n)));a.sort((x,y)=>x.series-y.series||x.round-y.round||x.free-y.free||((y.points??-1)-(x.points??-1))||x.title.localeCompare(y.title,"ja"));meta.textContent=`${a.length}件 / 全${W.length}件`;list.innerHTML=a.slice(0,120).map(workCard).join("")+(a.length>120?`<div class="empty">先頭120件を表示。検索か開催回で絞り込んでください（該当${a.length}件）。</div>`:"")||'<div class="empty">条件に一致する作品がありません。</div>'}
+ s.onchange=()=>{fill();go()};rr.onchange=go;q.oninput=go;fill();go();
+}
+function renderWork(id){
+ const w=W.find(x=>x.id===id);if(!w){return render404()}
+ const rn=seriesName(w), th=theme(w), su=sourceUrl(w), au=archiveUrl(w), rs=w.series===0?rankSource(w.round):null;
+ document.title=`${w.title} — ${w.author} | 東方SSこんぺ 非公式アーカイブ`;
+ const row=(k,v,mono=false)=>v==null||v===""?"":`<dt>${esc(k)}</dt><dd class="${mono?"mono":""}">${esc(v)}</dd>`;
+ document.body.innerHTML=header()+`<main><div class="page-head"><div class="wrap"><div class="breadcrumbs"><a href="/">トップ</a> / <a href="${rhref(rid(w))}">${rn} 第${w.round}回</a> / 作品</div><div class="eyebrow">${rn} · 第${w.round}回</div><h1>${esc(w.title)}</h1><div class="byline">作者：${esc(w.author)}</div><div class="chips"><span class="chip">お題：${esc(th)}</span>${w.points!=null?`<span class="chip">${w.points} pt</span>`:""}<span class="chip">${stateLabel(w)}</span></div></div></div>
+ <section><div class="wrap detail-grid"><div class="panel"><h2>作品メタ情報</h2><dl class="kv">${row("シリーズ",rn)}${row("開催回","第"+w.round+"回")}${row("部門",w.free?"お題なし":"お題あり")}${row("お題",th)}${row("作者",w.author)}${row("得点",w.points!=null?w.points+" pt":null)}${row("サイズ",w.size)}${row("評価",w.evals)}${row("コメント数",w.comments)}${row("Rate",w.rate)}${row("投稿日時",w.submitted)}${row("更新日時",w.updated)}${row("投稿キー",w.key,true)}${row("元ディレクトリ",srcDir(w),true)}${row("元URL",su?su.replace(":80",""):null,true)}${row("保存状態",stateLabel(w))}</dl></div>
+ <aside class="panel side"><h2>読む・資料を確認</h2>${w.series===0&&au?`<a class="action" href="${esc(au)}" target="_blank" rel="noopener noreferrer">${w.state===1?"Wayback Machineで読む":"Waybackの保存履歴を確認"} ↗</a>`:""}${w.series===0&&su&&(!au||w.ts)?`<a class="action secondary" href="https://web.archive.org/web/*/${esc(su)}" target="_blank" rel="noopener noreferrer">このURLの全保存履歴 ↗</a>`:""}${rs?`<a class="action secondary" href="${rs}" target="_blank" rel="noopener noreferrer">当時の順位表資料 ↗</a>`:""}${w.series===1?`<div class="callout red">新東方SSコンペの作品本文について、公開Wayback保存先は現在確認できていません。本文リンクは掲載していません。</div>`:""}${w.series===1&&w.round===2?`<div class="callout red"><strong>情報提供募集中</strong><br>本文ファイル・作者原稿・ブラウザ保存・旧ミラーのバックアップ・当時のURLや配布物を探しています。</div>`:""}<div class="callout">この作品の恒久リンク<br><span class="mono">${esc(location.origin+whref(w))}</span></div></aside></div></section></main>`+footer();
+}
+function renderRound(id){
+ const r=R.find(x=>x.id===id);if(!r)return render404();let a=W.filter(w=>rid(w)===id);a.sort((x,y)=>x.free-y.free||((y.points??-1)-(x.points??-1))||x.title.localeCompare(y.title,"ja"));
+ document.title=`${r.series?"新東方SSコンペ":"旧東方SSこんぺ"} 第${r.round}回「${r.theme}」 | 非公式アーカイブ`;
+ const archive=!r.series?`https://web.archive.org/web/*/http://www10.atpages.jp/thcompe/${DIR[r.round]}/`:null,rs=!r.series?rankSource(r.round):null;
+ document.body.innerHTML=header()+`<main><div class="page-head"><div class="wrap"><div class="breadcrumbs"><a href="/">トップ</a> / 開催回</div><div class="eyebrow">${r.series?"新東方SSコンペ":"旧東方SSこんぺ"}</div><h1>第${r.round}回 「${esc(r.theme)}」</h1><div class="byline">現存資料から ${a.length}作品を収録</div>${id==="new-r2"?`<div class="notice wanted"><strong>第2回「空白」の情報提供募集中</strong><br>本文ファイル、作者原稿、ブラウザ保存、旧ミラーのバックアップ、当時の配布物・URLなどの情報を探しています。</div>`:""}</div></div>
+ <section><div class="wrap detail-grid"><div><div class="section-head"><div><div class="eyebrow">Works</div><h2>作品一覧 ${a.length}件</h2></div></div><div class="works">${a.map(workCard).join("")}</div></div><aside class="panel side"><h2>開催回情報</h2><dl class="kv"><dt>お題</dt><dd>${esc(r.theme)}</dd><dt>収録件数</dt><dd>${a.length}件</dd>${!r.series?`<dt>元ディレクトリ</dt><dd class="mono">${DIR[r.round]}</dd>`:""}</dl>${archive?`<a class="action" href="${archive}" target="_blank" rel="noopener noreferrer">開催回のWayback ↗</a>`:""}${rs?`<a class="action secondary" href="${rs}" target="_blank" rel="noopener noreferrer">当時の順位表資料 ↗</a>`:""}${r.series?`<div class="callout red">新東方SSコンペには本文Waybackリンクを付けていません。</div>`:""}</aside></div></section></main>`+footer();
+}
+function render404(){document.title="見つかりません | 東方SSこんぺ 非公式アーカイブ";document.body.innerHTML=header()+`<main><div class="wrap"><div class="empty" style="margin:50px 0">ページが見つかりません。<br><a class="text-link" href="/">トップへ戻る</a></div></div></main>`+footer()}
+const p=location.pathname.split("/").filter(Boolean);
+if(p[0]==="works"&&p[1])renderWork(decodeURIComponent(p[1]));else if(p[0]==="rounds"&&p[1])renderRound(decodeURIComponent(p[1]));else renderHome();
