@@ -440,6 +440,8 @@ def _windows_pipe_server(pipe_name: str, ranker: Any, show_ui: bool = True,
                                 last_request_at=time.time(),
                                 last_latency_ms=round(latency_ms, 3),
                                 last_source="mozc" if is_ime else "probe",
+                                cache_hits=int(getattr(ranker, "cache_hits", 0)),
+                                cache_misses=int(getattr(ranker, "cache_misses", 0)),
                             )
                             if is_ime:
                                 response = loads_strict(output.decode("utf-8"))
@@ -591,11 +593,15 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         return 2
     if args.pipe:
         if args.backend in {"ruri", "onnx"}:
+            from ranker.cache import CachedRanker
+
             # A current Mozc process marks Space/Convert as explicit. Requests
             # from older binaries have no marker and are treated as live input:
             # return Mozc order immediately until the same request is stable
             # for 500 ms, so typing never starts model inference.
-            ranker = InteractiveBurstGuard(ranker, settle_seconds=0.5)
+            # Cache actual model results inside the guard so a legacy debounce
+            # response is never mistaken for a completed AI ranking.
+            ranker = InteractiveBurstGuard(CachedRanker(ranker), settle_seconds=0.5)
         model = getattr(ranker, "model_path", args.model_name if args.backend != "rule" else "rule")
         status = RuntimeStatus(
             args.status_file, args.backend, str(model), normalize_windows_pipe_name(args.pipe)

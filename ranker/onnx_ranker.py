@@ -88,6 +88,21 @@ class OnnxRuriReranker:
                 "設定で「自動選択」または「CPU」を選んでください。"
             )
 
+        try:
+            self._load_session(model_path, use_gpu=use_gpu)
+        except Exception:
+            if requested != "auto" or not use_gpu:
+                raise
+            # Provider availability does not guarantee a working driver/model.
+            # Drop the failed GPU session, then select the CPU INT8 artifact
+            # and fresh CPU session options rather than running FP16 on CPU.
+            self.session = None
+            LOG.warning("DirectML initialization failed; retrying with CPU")
+            self._load_session(model_path, use_gpu=False)
+
+    def _load_session(
+        self, model_path: Optional[str | Path], *, use_gpu: bool
+    ) -> None:
         if model_path is not None:
             resolved_model = Path(model_path)
         elif use_gpu:
@@ -106,12 +121,16 @@ class OnnxRuriReranker:
             ))
         if not resolved_model or not resolved_model.exists():
             raise FileNotFoundError("配布用ONNXモデルが見つかりません。再インストールしてください。")
-        tokenizer_path = _resolve_first((
-            "build/onnx-model-70m/tokenizer.json",
-            "models/onnx/tokenizer.json",
-            "models/ruri-v3-70m-ime-distilled/tokenizer.json",
-            "models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json",
-        ))
+        # Keep a selected model paired with its own tokenizer when available,
+        # including after switching from the GPU artifact to the CPU artifact.
+        tokenizer_path = resolved_model.parent / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            tokenizer_path = _resolve_first((
+                "build/onnx-model-70m/tokenizer.json",
+                "models/onnx/tokenizer.json",
+                "models/ruri-v3-70m-ime-distilled/tokenizer.json",
+                "models/ruri-v3-reranker-310m-ime-tuned/tokenizer.json",
+            ))
         if tokenizer_path is None:
             raise FileNotFoundError("AI tokenizer.json が見つかりません。再インストールしてください。")
 
@@ -134,21 +153,15 @@ class OnnxRuriReranker:
         self.session = ort.InferenceSession(
             str(resolved_model), sess_options=options, providers=providers
         )
+        self._warmup()
         active_providers = list(self.session.get_providers())
         directml_active = "DmlExecutionProvider" in active_providers
         self.device = "gpu-directml" if directml_active else "cpu"
-        if requested == "gpu" and not directml_active:
+        if use_gpu and not directml_active:
             raise RuntimeError(
                 "GPU演算を要求しましたが、ONNX RuntimeセッションでDirectMLが有効になりませんでした。"
             )
-        if use_gpu and not directml_active:
-            LOG.warning(
-                "DirectML was requested but the active session providers are %s; using CPU",
-                active_providers,
-            )
-        else:
-            LOG.info("active ONNX providers=%s device=%s", active_providers, self.device)
-        self._warmup()
+        LOG.info("active ONNX providers=%s device=%s", active_providers, self.device)
 
     def _encode(self, queries: list[str], documents: list[str]) -> dict[str, np.ndarray]:
         encodings = self.tokenizer.encode_batch(list(zip(queries, documents)))
