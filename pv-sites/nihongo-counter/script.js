@@ -1,3 +1,6 @@
+const COMMON_API = 'https://form-lens-api.hurukigeoetym.workers.dev';
+function reportVisit() { fetch(`${COMMON_API}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ site: 'nihongo-counter', eventName: 'page_view' }) }).catch(() => {}); }
+
 const input = document.querySelector('#textInput');
 const countAll = document.querySelector('#countAll');
 const countNoSpace = document.querySelector('#countNoSpace');
@@ -21,4 +24,5 @@ document.querySelector('#copyButton').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(input.value); status.textContent = '文章をコピーしました。'; status.classList.add('is-success'); } catch { status.textContent = 'コピーできませんでした。文章を選択してコピーしてください。'; }
 });
 updateCounts();
+reportVisit();
 

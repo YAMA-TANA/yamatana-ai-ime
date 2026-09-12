@@ -1,3 +1,6 @@
+const COMMON_API = 'https://form-lens-api.hurukigeoetym.workers.dev';
+function reportVisit() { fetch(`${COMMON_API}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ site: 'kanji-quiz', eventName: 'page_view' }) }).catch(() => {}); }
+
 const questions = [
   ['躑躅', 'つつじ'], ['紫陽花', 'あじさい'], ['蒲公英', 'たんぽぽ'], ['山茶花', 'さざんか'], ['百日紅', 'さるすべり'],
   ['海月', 'くらげ'], ['河豚', 'ふぐ'], ['土竜', 'もぐら'], ['蝸牛', 'かたつむり'], ['五月雨', 'さみだれ']
@@ -38,4 +41,5 @@ checkButton.addEventListener('click', () => {
 nextButton.addEventListener('click', () => { index = (index + 1) % questions.length; renderQuestion(); });
 input.addEventListener('keydown', (event) => { if (event.key === 'Enter') checkButton.click(); });
 renderQuestion();
+reportVisit();
 

@@ -1,3 +1,6 @@
+const COMMON_API = 'https://form-lens-api.hurukigeoetym.workers.dev';
+function reportVisit() { fetch(`${COMMON_API}/api/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ site: 'image-shrink-jp', eventName: 'page_view' }) }).catch(() => {}); }
+
 const fileInput = document.querySelector('#fileInput');
 const dropZone = document.querySelector('#dropZone');
 const controls = document.querySelector('#controls');
@@ -48,4 +51,5 @@ fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
 dropZone.addEventListener('drop', (event) => loadFile(event.dataTransfer.files[0]));
 quality.addEventListener('input', () => { qualityValue.textContent = quality.value; compress(); });
 downloadButton.addEventListener('click', (event) => { if (downloadButton.classList.contains('disabled')) event.preventDefault(); });
+reportVisit();
 
