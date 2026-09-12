@@ -27,9 +27,23 @@ async function open(path, check) {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', err => errors.push(String(err?.stack || err)));
+  page.on('response', response => {
+    const status = response.status();
+    const url = response.url();
+    if (status >= 400 && !/\/favicon\.ico(?:\?|$)/i.test(url) && !/googletagmanager\.com/i.test(url)) {
+      errors.push(`HTTP ${status}: ${url}`);
+    }
+  });
+  page.on('requestfailed', request => {
+    const url = request.url();
+    if (!/googletagmanager\.com|google-analytics\.com|\/favicon\.ico(?:\?|$)/i.test(url)) {
+      errors.push(`request failed: ${url} — ${request.failure()?.errorText || 'unknown'}`);
+    }
+  });
   page.on('console', msg => {
-    if (msg.type() === 'error' && !/googletagmanager|ERR_BLOCKED_BY_CLIENT|favicon/i.test(msg.text())) {
-      errors.push(`console: ${msg.text()}`);
+    const text = msg.text();
+    if (msg.type() === 'error' && !/Failed to load resource|googletagmanager|ERR_BLOCKED_BY_CLIENT/i.test(text)) {
+      errors.push(`console: ${text}`);
     }
   });
   try {
@@ -69,7 +83,7 @@ await open('/pv-sites/pixel-lite/', async page => {
 
 await open('/pv-sites/audio-master-lite/', async page => {
   await page.waitForSelector('#waveCanvas');
-  for (const selector of ['#trimSelection','#fadeIn','#fadeOut','#normalize','#undoEdit','#redoEdit','#exportWav']) {
+  for (const selector of ['#trimSelection','#fadeIn','#fadeOut','#normalize','#undoEdit','#redoEdit','#playSelection','#exportSelection','#exportWav']) {
     if (!await page.$(selector)) throw new Error(`missing ${selector}`);
   }
   const disabled = await page.$eval('#trimSelection', el => el.disabled);
