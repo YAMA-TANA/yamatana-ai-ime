@@ -30,9 +30,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: package-lock.json
-        continue-on-error: true
       - name: Install lightweight browser driver
         run: npm install --no-save --no-package-lock puppeteer-core@24.16.0
       - name: Start static server
