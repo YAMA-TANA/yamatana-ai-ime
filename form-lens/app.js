@@ -515,6 +515,7 @@ function boot() {
   applyLanguage();
   renderHistory();
   setupInteractions();
+  sendEvent("page_view");
   loadLibrary();
 }
 
