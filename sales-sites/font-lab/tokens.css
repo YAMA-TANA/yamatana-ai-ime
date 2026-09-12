@@ -1,0 +1,29 @@
+/* Hallmark · theme: Specimen Mint · macrostructure: Catalogue Grid · critique: P5 H5 E5 S5 R5 V5 */
+:root {
+  --color-ink: oklch(20% 0.035 170);
+  --color-ink-soft: oklch(42% 0.035 170);
+  --color-paper: oklch(94% 0.025 165);
+  --color-paper-bright: oklch(98% 0.012 165);
+  --color-paper-dark: oklch(30% 0.06 170);
+  --color-line: oklch(78% 0.035 165);
+  --color-accent: oklch(67% 0.16 180);
+  --color-accent-warm: oklch(72% 0.16 42);
+  --color-accent-pink: oklch(73% 0.16 7);
+  --color-focus: oklch(54% 0.18 255);
+  --font-display: "Arial Black", "Yu Gothic", sans-serif;
+  --font-body: "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
+  --space-sm: .75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 7rem;
+  --radius-sm: .35rem;
+  --radius-md: .8rem;
+  --radius-lg: 1.25rem;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --dur-fast: 140ms;
+  --dur-mid: 240ms;
+}
+
