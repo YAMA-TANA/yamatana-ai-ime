@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "form-lens-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-12",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "WGER_API_BASE": "https://wger.de/api/v2",
+    "OPEN_METEO_BASE": "https://api.open-meteo.com/v1/forecast"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "commomd1",
+      "database_id": "307a0410-e276-46d6-a744-fbbdbce39632"
+    }
+  ]
+}
+
