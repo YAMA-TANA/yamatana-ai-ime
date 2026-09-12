@@ -54,7 +54,7 @@ button:disabled{opacity:.42;cursor:not-allowed}
 .overlay-item{position:absolute;line-height:1.18;pointer-events:none}
 .overlay-text{padding:2px;white-space:pre-wrap;overflow-wrap:anywhere;font-family:Arial,"Noto Sans",sans-serif}
 .overlay-highlight{mix-blend-mode:multiply}
-.overlay-whiteout{background:#fff;box-shadow:inset 0 0 0 1px #ddd}
+.overlay-whiteout{background:#fff;box-shadow:inset 0 0 0 1px #ddd;opacity:1!important}
 .overlay svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .overlay polyline{fill:none;stroke-linecap:round;stroke-linejoin:round}
 .empty-stage{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:30px;color:var(--muted)}
