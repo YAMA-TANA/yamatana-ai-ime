@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>画像圧縮｜ブラウザだけで軽くする無料ツール</title>
+  <meta name="description" content="画像を選ぶだけで、ブラウザ内でJPEG・PNG・WebPを圧縮。画像をサーバーへアップロードせず、軽くした画像を保存できます。">
+  <meta name="theme-color" content="#edf4f2">
+  <link rel="canonical" href="https://image-shrink-jp.pages.dev/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YZ8R7GTWQR"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-YZ8R7GTWQR');
+  </script>
+</head>
+<body>
+  <header class="site-header shell"><a class="brand" href="./"><span class="brand-mark">軽</span><span>画像を軽くする帖</span></a><nav class="nav-links" aria-label="メインナビゲーション"><a href="#tool">圧縮する</a><a href="#privacy">安全性</a><a class="nav-cta" href="#tool">無料で使う</a></nav></header>
+  <main>
+    <section class="compress-hero shell" id="tool"><div class="intro"><p class="eyebrow">画像ツール / 無料</p><h1>画像を、<br><span>軽くする。</span></h1><p class="lede">アップロード不要。画像を選ぶと、ブラウザの中で圧縮して保存できます。</p><div class="format-row"><span>JPG</span><span>PNG</span><span>WEBP</span></div></div><div class="compress-panel"><div class="panel-head"><div><span class="panel-title">画像圧縮</span><span class="panel-note">ファイルは外へ送信しません</span></div><label class="button button-primary file-button" for="fileInput">画像を選ぶ</label><input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" hidden></div><div id="dropZone" class="drop-zone"><span class="drop-icon">＋</span><strong>画像をここに選択</strong><span>JPG / PNG / WebP</span></div><div id="controls" class="controls" hidden><label for="quality">圧縮品質 <output id="qualityValue">80</output></label><input id="quality" type="range" min="10" max="100" value="80"><div class="result-row"><div><span>元のサイズ</span><b id="originalSize">—</b></div><div><span>圧縮後</span><b id="compressedSize">—</b></div><div><span>削減率</span><b id="savedSize">—</b></div></div><a id="downloadButton" class="button button-primary disabled" href="#" download="compressed-image.webp" aria-disabled="true">圧縮画像を保存</a><p id="status" class="status" role="status">品質を調整すると、圧縮結果が更新されます。</p></div></div></section>
+    <section class="privacy-strip shell" id="privacy"><span class="privacy-mark">LOCAL</span><p><strong>画像はブラウザ内だけで処理。</strong> 選んだ画像を外部サーバーへ送らず、端末上のCanvas APIで圧縮します。</p></section>
+    <section class="guide shell"><div class="guide-intro"><p class="eyebrow">HOW IT WORKS</p><h2>3つの操作で、<br>送れるサイズに。</h2></div><div class="guide-list"><div><span>01</span><div><h3>画像を選ぶ</h3><p>端末の画像を選択するか、ドロップします。</p></div></div><div><span>02</span><div><h3>品質を調整する</h3><p>見た目とファイルサイズのバランスを確認します。</p></div></div><div><span>03</span><div><h3>保存する</h3><p>圧縮した画像を端末へ保存します。</p></div></div></div></section>
+    <section class="faq shell"><div><p class="eyebrow">よくある質問</p><h2>軽くする前に。</h2></div><div class="faq-list"><details open><summary>対応している画像形式は？</summary><p>JPEG、PNG、WebPを選べます。出力はWebP形式で保存します。</p></details><details><summary>画像はアップロードされますか？</summary><p>このページでは画像処理をブラウザ内で行います。画像ファイルをサーバーへ送信する処理はありません。</p></details><details><summary>圧縮後の画像はどこにありますか？</summary><p>「圧縮画像を保存」を押すと、ブラウザのダウンロード機能で端末へ保存されます。</p></details></div></section>
+  </main>
+  <footer class="site-footer shell"><span>画像を軽くする帖</span><div><a href="#tool">画像圧縮</a><a href="#privacy">プライバシー</a></div></footer>
+  <script src="script.js"></script>
+</body>
+</html>
+

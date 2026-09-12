@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>難読漢字クイズ｜読めそうで読めない漢字の読み方</title>
+  <meta name="description" content="躑躅、紫陽花、蒲公英など、読めそうで読めない難読漢字をクイズで確認。読み方と意味を一覧でも見られます。">
+  <meta name="theme-color" content="#161c29">
+  <link rel="canonical" href="https://kanji-quiz.pages.dev/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YZ8R7GTWQR"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-YZ8R7GTWQR');
+  </script>
+</head>
+<body>
+  <header class="site-header shell"><a class="brand" href="./"><span class="brand-mark">漢</span><span>漢字の読み場</span></a><nav class="nav-links" aria-label="メインナビゲーション"><a href="#quiz">クイズ</a><a href="#list">読み方一覧</a><a class="nav-cta" href="#quiz">挑戦する</a></nav></header>
+  <main>
+    <section class="quiz-hero shell"><div class="hero-copy"><p class="eyebrow">漢字クイズ / 無料</p><h1>読めそうで、<br><span>読めない。</span></h1><p class="lede">身近な植物、食べもの、自然の言葉。知っているのに読めない漢字を、1問ずつ確かめます。</p><a class="button button-primary" href="#quiz">クイズを始める <span aria-hidden="true">↓</span></a></div><div class="quiz-card" id="quiz"><div class="quiz-meta"><span id="questionNumber">QUESTION 01</span><span id="scoreLabel">SCORE 0</span></div><div class="kanji-word" id="kanjiWord">躑躅</div><p class="hint">この漢字、なんと読む？</p><input id="answerInput" type="text" inputmode="kana" autocomplete="off" placeholder="ひらがなで入力" aria-label="漢字の読みを入力"><div class="quiz-actions"><button id="checkButton" class="button button-primary" type="button">答え合わせ</button><button id="nextButton" class="button button-ghost" type="button" disabled>次の問題</button></div><p id="quizFeedback" class="feedback" role="status">読みを入力して答え合わせしてください。</p></div></section>
+    <section class="list-section shell" id="list"><div class="section-head"><p class="eyebrow">READING LIST</p><h2>今日の難読漢字、<br>10語。</h2><p>クイズに出る漢字の読み方と意味をまとめています。</p></div><div class="word-grid"><article><b>躑躅</b><span>つつじ</span><p>春に咲く花。道路や庭でも見かけます。</p></article><article><b>紫陽花</b><span>あじさい</span><p>梅雨の時期に咲く、色の変化も美しい花。</p></article><article><b>蒲公英</b><span>たんぽぽ</span><p>道ばたにも咲く、黄色い花。</p></article><article><b>山茶花</b><span>さざんか</span><p>冬に花を咲かせる木。</p></article><article><b>百日紅</b><span>さるすべり</span><p>夏に長く花を楽しめる木。</p></article><article><b>海月</b><span>くらげ</span><p>海を漂う透明な生きもの。</p></article><article><b>河豚</b><span>ふぐ</span><p>毒を持つ種類もいる魚。</p></article><article><b>土竜</b><span>もぐら</span><p>土の中にトンネルを掘って暮らす動物。</p></article><article><b>蝸牛</b><span>かたつむり</span><p>殻を背負ってゆっくり進む生きもの。</p></article><article><b>五月雨</b><span>さみだれ</span><p>梅雨の頃に降り続く雨。</p></article></div></section>
+    <section class="tips shell"><div><p class="eyebrow">LEARN BY CONTEXT</p><h2>読み方は、<br>言葉の中で覚える。</h2></div><div class="tip-list"><div><span>01</span><p>植物の名前は、季節と一緒に覚える</p></div><div><span>02</span><p>食べものは、漢字の由来を知る</p></div><div><span>03</span><p>読めなかった漢字を、あとで一覧に戻る</p></div></div></section>
+  </main>
+  <footer class="site-footer shell"><span>漢字の読み場</span><div><a href="#quiz">クイズ</a><a href="#list">読み方一覧</a></div></footer>
+  <script src="script.js"></script>
+</body>
+</html>
+

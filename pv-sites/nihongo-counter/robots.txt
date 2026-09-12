@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Sitemap: https://nihongo-counter.pages.dev/sitemap.xml
+
