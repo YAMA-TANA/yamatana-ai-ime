@@ -41,6 +41,7 @@ function applyLanguage() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => { element.placeholder = tr(element.dataset.i18nPlaceholder); });
   document.querySelectorAll("[data-i18n-aria]").forEach((element) => { element.setAttribute("aria-label", tr(element.dataset.i18nAria)); });
   setText("#apiStatus", tr("apiOnline"));
+  if (libraryLoaded) setText("#libraryStatus", libraryAvailable ? tr("libraryLive", { count: libraryData.length }) : tr("libraryFallback"));
   updateExerciseLabels();
   if (session) { updateMetrics({ metric: tracker?.lastMetric ?? null, quality: tracker?.lastMetric === null ? null : scoreMetric(tracker.lastMetric, EXERCISES[activeExercise]), confidence: tracker?.maxConfidence || null, cue: tracker?.lastCue || tr("cueStandby") }); }
   renderHistory();
@@ -102,6 +103,8 @@ let lastFrameAt = 0;
 let session = null;
 let tracker = null;
 let libraryData = FALLBACK_EXERCISES;
+let libraryLoaded = false;
+let libraryAvailable = false;
 
 function resetTracker() {
   tracker = { phase: "up", reps: 0, holdSeconds: 0, lastRepAt: 0, minAngle: 180, maxConfidence: 0, lastCue: tr("cueStandby"), lastMetric: null };
@@ -446,13 +449,16 @@ function renderLibrary() {
 async function loadLibrary() {
   try {
     const payload = await apiRequest("/api/exercises?limit=30");
-    if (Array.isArray(payload.exercises) && payload.exercises.length) libraryData = payload.exercises.map(normaliseExercise);
+    libraryAvailable = Array.isArray(payload.exercises) && payload.exercises.length > 0;
+    if (libraryAvailable) libraryData = payload.exercises.map(normaliseExercise);
     setText("#libraryStatus", tr("libraryLive", { count: libraryData.length }));
     setText("#apiStatus", tr("apiOnline"));
   } catch {
+    libraryAvailable = false;
     setText("#libraryStatus", tr("libraryFallback"));
     setText("#apiStatus", tr("apiBasic"));
   }
+  libraryLoaded = true;
   renderLibrary();
 }
 
