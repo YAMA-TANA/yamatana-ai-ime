@@ -1,0 +1,53 @@
+name: Flagship browser smoke
+
+on:
+  push:
+    branches: [marketing-sites]
+    paths:
+      - 'pv-sites/pdf-workbench/**'
+      - 'pv-sites/pixel-lite/**'
+      - 'pv-sites/audio-master-lite/**'
+      - 'tests/marketing-smoke.mjs'
+      - '.github/workflows/flagship-browser-smoke.yml'
+  pull_request:
+    paths:
+      - 'pv-sites/pdf-workbench/**'
+      - 'pv-sites/pixel-lite/**'
+      - 'pv-sites/audio-master-lite/**'
+      - 'tests/marketing-smoke.mjs'
+      - '.github/workflows/flagship-browser-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+        continue-on-error: true
+      - name: Install lightweight browser driver
+        run: npm install --no-save --no-package-lock puppeteer-core@24.16.0
+      - name: Start static server
+        shell: bash
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 > /tmp/marketing-http.log 2>&1 &
+          echo $! > /tmp/marketing-http.pid
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:4173/pv-sites/pixel-lite/ >/dev/null; then exit 0; fi
+            sleep .25
+          done
+          cat /tmp/marketing-http.log
+          exit 1
+      - name: Run Chromium smoke tests
+        run: node tests/marketing-smoke.mjs
+      - name: Stop static server
+        if: always()
+        run: kill "$(cat /tmp/marketing-http.pid)" 2>/dev/null || true
