@@ -1,7 +1,7 @@
 'use strict';
 const SQL_JS='https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
 const MAX_CAPTURE_ROWS=5000;
-let SQL=null,db=null,loading=null;
+let SQL=null,db=null,loading=null,inTransaction=false;
 
 async function ensureSql(){
   if(SQL)return SQL;
@@ -11,7 +11,7 @@ async function ensureSql(){
   }
   return loading;
 }
-function closeDb(){if(db){try{db.close()}catch{}db=null}}
+function closeDb(){if(db){try{db.close()}catch{}db=null}inTransaction=false}
 function qIdent(v){return`"${String(v).replace(/"/g,'""')}"`}
 function displayCell(v){return v instanceof Uint8Array?`[BLOB ${formatBytes(v.length)}]`:v}
 function formatBytes(n){if(n<1024)return`${n} B`;if(n<1048576)return`${(n/1024).toFixed(1)} KB`;return`${(n/1048576).toFixed(1)} MB`}
@@ -20,13 +20,17 @@ function schema(){
   const top=db.exec("SELECT type,name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY type,name")[0]?.values||[];
   return top.map(([type,name])=>({type:String(type),name:String(name),quoted:qIdent(name)}));
 }
+function firstKeyword(sql){
+  return sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/,'').match(/^([A-Z]+)/i)?.[1]?.toUpperCase()||'';
+}
 function isProbablyMutating(sql){
   const s=sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*/,'').toUpperCase();
-  return /^(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|REINDEX|ANALYZE|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|PRAGMA\s+(?!TABLE_INFO|INDEX_LIST|INDEX_INFO|DATABASE_LIST|COMPILE_OPTIONS|FOREIGN_KEY_LIST))/i.test(s);
+  return /^(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|VACUUM|REINDEX|ANALYZE|ATTACH|DETACH|PRAGMA\s+(?!TABLE_INFO|INDEX_LIST|INDEX_INFO|DATABASE_LIST|COMPILE_OPTIONS|FOREIGN_KEY_LIST))/i.test(s);
 }
 function query(sql){
   if(!db)throw new Error('No database is open');
   let stmt;
+  const keyword=firstKeyword(sql),wasInTransaction=inTransaction;
   try{
     stmt=db.prepare(sql);
     const columns=stmt.getColumnNames().map(String),rows=[];
@@ -38,25 +42,28 @@ function query(sql){
       }
     }else stmt.step();
     const changed=db.getRowsModified(),mutating=isProbablyMutating(sql)||changed>0;
-    const out={columns,rows,truncated,changed,mutating};
-    if(mutating){
+    if(keyword==='BEGIN'||keyword==='SAVEPOINT')inTransaction=true;
+    if(keyword==='COMMIT'||keyword==='END'||keyword==='ROLLBACK'||keyword==='RELEASE')inTransaction=false;
+    const out={columns,rows,truncated,changed,mutating,inTransaction};
+    const transactionBoundary=(wasInTransaction&&!inTransaction)||(keyword==='COMMIT'||keyword==='END'||keyword==='ROLLBACK'||keyword==='RELEASE');
+    if((mutating&&!inTransaction)||transactionBoundary){
       const snap=db.export();
       out.snapshot=snap.buffer;
       out.schema=schema();
-    }
+    }else if(mutating)out.schema=schema();
     return out;
   }finally{if(stmt)try{stmt.free()}catch{}}
 }
 async function open(bytes){
-  const S=await ensureSql();closeDb();db=new S.Database(new Uint8Array(bytes));return{schema:schema()};
+  const S=await ensureSql();closeDb();db=new S.Database(new Uint8Array(bytes));return{schema:schema(),inTransaction:false};
 }
 async function demo(){
   const S=await ensureSql();closeDb();db=new S.Database();
   db.run('CREATE TABLE notes(id INTEGER PRIMARY KEY, title TEXT, category TEXT, score REAL, created_at TEXT);');
   db.run("INSERT INTO notes(title,category,score,created_at) VALUES ('Quiet corners','place',4.8,'2026-01-12'),('A useful shortcut','workflow',4.3,'2026-02-03'),('Morning light','place',4.6,'2026-02-08'),('Tiny rituals','habit',3.9,'2026-03-10'),('One good question','workflow',4.9,'2026-03-17'),('Paper texture','design',4.1,'2026-04-01');");
-  const snap=db.export();return{schema:schema(),snapshot:snap.buffer};
+  const snap=db.export();return{schema:schema(),snapshot:snap.buffer,inTransaction:false};
 }
-function exportDb(){if(!db)throw new Error('No database is open');const snap=db.export();return{snapshot:snap.buffer}}
+function exportDb(){if(!db)throw new Error('No database is open');const snap=db.export();return{snapshot:snap.buffer,inTransaction}}
 
 self.onmessage=async e=>{
   const {id,action,payload={}}=e.data||{};
@@ -65,7 +72,7 @@ self.onmessage=async e=>{
     if(action==='open')result=await open(payload.bytes);
     else if(action==='demo')result=await demo();
     else if(action==='query')result=query(String(payload.sql||''));
-    else if(action==='schema')result={schema:schema()};
+    else if(action==='schema')result={schema:schema(),inTransaction};
     else if(action==='export')result=exportDb();
     else throw new Error('Unknown worker action');
     const transfer=[];
