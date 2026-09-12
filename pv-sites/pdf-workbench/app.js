@@ -575,6 +575,61 @@
     return canvas.toDataURL('image/png');
   }
 
+  function hasSecureRedaction(model){
+    return model.annotations.some(a=>a.kind==='whiteout');
+  }
+
+  async function flattenRedactedPage(model,out){
+    const srcPage=await pdf.getPage(model.sourceIndex+1);
+    const rotation=effectiveRotation(model,srcPage);
+    const base=srcPage.getViewport({scale:1,rotation});
+    let rasterScale=2.5;
+    const maxPixels=24_000_000;
+    const requested=base.width*base.height*rasterScale*rasterScale;
+    if(requested>maxPixels) rasterScale*=Math.sqrt(maxPixels/requested);
+    rasterScale=Math.max(1.25,rasterScale);
+    const viewport=srcPage.getViewport({scale:rasterScale,rotation});
+    const canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.ceil(viewport.width));
+    canvas.height=Math.max(1,Math.ceil(viewport.height));
+    const ctx=canvas.getContext('2d',{alpha:false});
+    await srcPage.render({canvasContext:ctx,viewport,background:'rgb(255,255,255)'}).promise;
+
+    for(const a of model.annotations){
+      if(a.kind==='pen'){
+        if(!a.points?.length)continue;
+        ctx.save();
+        ctx.strokeStyle=a.color||'#000000';
+        ctx.lineWidth=Math.max(1,(Number(a.lineWidth)||1)*rasterScale);
+        ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();
+        a.points.forEach((p,i)=>{const x=p.x*canvas.width,y=p.y*canvas.height;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+        ctx.stroke();ctx.restore();
+        continue;
+      }
+      const x=a.x*canvas.width,y=a.y*canvas.height,w=a.w*canvas.width,h=a.h*canvas.height;
+      if(a.kind==='whiteout'){
+        ctx.save();ctx.globalAlpha=1;ctx.fillStyle='#ffffff';ctx.fillRect(x,y,w,h);ctx.restore();
+      }else if(a.kind==='highlight'){
+        ctx.save();ctx.globalAlpha=Math.max(0,Math.min(1,(Number(a.opacity)||100)/100));ctx.fillStyle=a.color||'#fff176';ctx.fillRect(x,y,w,h);ctx.restore();
+      }else if(a.kind==='text'){
+        ctx.save();
+        const fontPx=Math.max(8,(Number(a.fontSize)||14)*rasterScale);
+        ctx.font=`600 ${fontPx}px Arial, "Noto Sans", sans-serif`;
+        ctx.textBaseline='top';ctx.fillStyle=a.color||'#000000';
+        const lines=wrapText(ctx,a.text||'',Math.max(20,w));
+        const lineHeight=fontPx*1.25;
+        lines.forEach((line,i)=>{const yy=y+i*lineHeight;if(yy<=y+h)ctx.fillText(line,x,yy,Math.max(20,w))});
+        ctx.restore();
+      }
+    }
+
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('PNG_ENCODE_FAILED')),'image/png'));
+    const image=await out.embedPng(await blob.arrayBuffer());
+    const page=out.addPage([base.width,base.height]);
+    page.drawImage(image,{x:0,y:0,width:base.width,height:base.height});
+    return page;
+  }
+
   async function exportPdf(){
     if(!pdfBytes||!pages.length||busy){if(!pdfBytes)toast(t('needPdf'));return}
     setBusy(true,t('exporting'));
@@ -583,6 +638,12 @@
       const out=await PDFLib.PDFDocument.create();
 
       for(const model of pages){
+        if(hasSecureRedaction(model)){
+          $('#busyText').textContent=t('redactionFlatten');
+          await flattenRedactedPage(model,out);
+          continue;
+        }
+
         const [page]=await out.copyPages(src,[model.sourceIndex]);
         out.addPage(page);
         const srcPdfPage=await pdf.getPage(model.sourceIndex+1);
@@ -600,13 +661,8 @@
           }
 
           const g=await annotationPdfGeometry(model,a);
-          if(a.kind==='highlight'||a.kind==='whiteout'){
-            page.drawRectangle({
-              x:g.x,y:g.y,width:g.w,height:g.h,
-              color:a.kind==='whiteout'?PDFLib.rgb(1,1,1):hexToRgb(a.color),
-              opacity:a.kind==='whiteout'?1:a.opacity/100,
-              borderWidth:0
-            });
+          if(a.kind==='highlight'){
+            page.drawRectangle({x:g.x,y:g.y,width:g.w,height:g.h,color:hexToRgb(a.color),opacity:a.opacity/100,borderWidth:0});
           }else if(a.kind==='text'){
             const pngUrl=await makeTextPng(a.text,a.color,a.fontSize,Math.max(20,g.w),Math.max(20,g.h));
             const img=await out.embedPng(pngUrl);
