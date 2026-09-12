@@ -1,0 +1,62 @@
+name: Marketing sites checks
+
+on:
+  push:
+    branches: [marketing-sites]
+    paths:
+      - 'pv-sites/**'
+      - 'sales-sites/**'
+      - '.github/workflows/marketing-sites-check.yml'
+  pull_request:
+    paths:
+      - 'pv-sites/**'
+      - 'sales-sites/**'
+      - '.github/workflows/marketing-sites-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find pv-sites sales-sites -type f -name '*.js' -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo 'No JavaScript files found.' >&2
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            echo "node --check $file"
+            node --check "$file"
+          done
+      - name: Reject empty shipped assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad=0
+          while IFS= read -r -d '' file; do
+            if [ ! -s "$file" ]; then
+              echo "Empty shipped asset: $file" >&2
+              bad=1
+            fi
+          done < <(find pv-sites sales-sites -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) -print0)
+          exit "$bad"
+      - name: Basic HTML entrypoint check
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' dir; do
+            if [ ! -s "$dir/index.html" ]; then
+              echo "Missing index.html: $dir" >&2
+              exit 1
+            fi
+          done < <(find pv-sites sales-sites -mindepth 1 -maxdepth 1 -type d -print0)
