@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Sitemap: https://pixel-lite.pages.dev/sitemap.xml
+
